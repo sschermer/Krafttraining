@@ -124,3 +124,14 @@ nicht mehr möglich.
 - Ein noch nicht abgeschlossenes Training blockiert den Phasenwechsel zum Schutz der Entwurfsdaten.
 
 Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und denselben privaten Signierschlüssel; GitHub Actions versieht sie mit fortlaufenden `versionCode`-Werten.
+
+## Version 0.3.1 – Kategorien und Körpergewicht
+
+- Die Übungskategorien sind sowohl unter **Training** (A/B-Plan) als auch unter **Übungen** (Katalog) einklappbar. Standardmäßig ist keine Kategorie geöffnet.
+- Tippen auf die Kategorie öffnet oder schließt sie; es kann nur **eine gleichzeitig** geöffnet sein.
+- Das Kürzel `(n)` neben dem Namen zeigt, wie viele Übungen dieser Kategorie im gewählten A-/B-Plan enthalten sind. Im Katalog können Übungen direkt angehakt und wieder abgewählt werden.
+- Ein Knopf namens **„Training erstellen“** wird auf Wunsch **nicht** angezeigt. Die bestehende Phasenverwaltung bleibt unter „Neue Trainingsphase“ in der Übersicht erhalten.
+- Ein eigener Tab **Gewicht** ist dauerhaft sichtbar: Körpergewicht samt frei wählbarem Messdatum/Uhrzeit erfassen, ändern und löschen.
+- Zeitreihendiagramm für das Körpergewicht mit Zeitfiltern 7/30/90 Tage, 1 Jahr und gesamter Zeitraum; Anzeige des Gewichtsverlaufs und der Änderung im Zeitraum.
+- Alle Gewichtsmessungen bleiben lokal gespeichert und gehen weiterhin in JSON-Backups sowie XLSX-Exporte ein.
+
