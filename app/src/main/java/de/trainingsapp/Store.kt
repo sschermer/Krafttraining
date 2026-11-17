@@ -234,6 +234,50 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         TrainingSet(c.getLong(0),c.getLong(1),c.getLong(2),c.getInt(3),
             c.optDouble(4),c.optInt(5),c.optInt(6),c.optDouble(7))
     }
+    // +1 = unambiguous improvement, -1 = decline, 0 = unchanged/ambiguous.
+    // Compare with the most recent earlier workout of the same plan containing
+    // this exercise, ordered by the user's actual training date.
+    // RIR is intentionally not used; mixed load/repetition changes stay neutral.
+    fun progressDirection(session:TrainingSession,exercise:Exercise):Int {
+        val previousId=query("""SELECT t.session_id FROM training_sets t
+            JOIN sessions s ON s.id=t.session_id
+            WHERE t.exercise_id=? AND s.plan=? AND
+              (s.timestamp<? OR (s.timestamp=? AND s.id<?))
+            GROUP BY t.session_id
+            ORDER BY s.timestamp DESC,s.id DESC LIMIT 1""",
+            arrayOf(exercise.id.toString(),session.plan,session.timestamp.toString(),
+                session.timestamp.toString(),session.id.toString())) { it.getLong(0) }
+            .firstOrNull() ?: return 0
+        val before=sets(previousId).filter {it.exerciseId==exercise.id}.sortedBy {it.number}
+        val now=sets(session.id).filter {it.exerciseId==exercise.id}.sortedBy {it.number}
+        if(now.isEmpty() || before.size!=now.size)return 0
+        var improved=false
+        var reduced=false
+        for(i in now.indices) {
+            val current=now[i]
+            val old=before[i]
+            if(exercise.kind=="time") {
+                val a=current.seconds ?: return 0
+                val b=old.seconds ?: return 0
+                if(a>b)improved=true else if(a<b)reduced=true
+            } else {
+                val a=current.reps ?: return 0
+                val b=old.reps ?: return 0
+                if(a>b)improved=true else if(a<b)reduced=true
+                if(current.weight!=null || old.weight!=null) {
+                    val c=current.weight ?: return 0
+                    val d=old.weight ?: return 0
+                    if(c>d+0.00001)improved=true else if(c<d-0.00001)reduced=true
+                }
+            }
+        }
+        return when {
+            improved && !reduced -> 1
+            reduced && !improved -> -1
+            else -> 0
+        }
+    }
+
     fun recentSets(exerciseId: Long): List<TrainingSet> {
         val ids = query("""SELECT t.session_id FROM training_sets t
             JOIN sessions s ON s.id=t.session_id

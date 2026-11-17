@@ -10,6 +10,62 @@ import java.util.zip.ZipOutputStream
 object DataExport {
     private fun date(value:Long) =
         SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.GERMANY).format(Date(value))
+    // Portable, UTF-8 single-workout export for sharing with ChatGPT.
+    // Unlike backupJson(), this is a human-readable analysis document
+    // and is not intended for restoring the app database.
+    fun workoutJson(store:Store,sessionId:Long):ByteArray {
+        val session=store.session(sessionId) ?: error("Trainingseinheit nicht gefunden.")
+        val phase=store.phase(session.phaseId)
+        val timestampFormat=SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX",Locale.GERMANY)
+        val result=org.json.JSONObject()
+            .put("format","TrainingsappSingleWorkout")
+            .put("schemaVersion",1)
+            .put("exportedAt",timestampFormat.format(Date()))
+            .put("notes","Ein einzelnes Krafttraining. Gewicht ist in kg angegeben; 'proSeite' bezeichnet die Gewichtseinheit. RIR ist optional.")
+        val context=org.json.JSONObject()
+            .put("id",session.id)
+            .put("datum",timestampFormat.format(Date(session.timestamp)))
+            .put("plan",session.plan)
+            .put("trainingsphase",phase?.name ?: "Trainingsphase "+session.phaseId)
+            .put("trainingsphaseId",session.phaseId)
+        val cardio=org.json.JSONObject()
+            .put("vorherAbsolviert",session.cardio)
+            .put("art",session.cardioType)
+            .put("dauerMinuten",session.cardioMinutes)
+        context.put("konditionVorher",cardio)
+        result.put("training",context)
+        val list=org.json.JSONArray()
+        for((exerciseId,rows) in store.sets(session.id).groupBy {it.exerciseId}) {
+            val exercise=store.exercise(exerciseId)
+            val item=org.json.JSONObject()
+                .put("uebungId",exerciseId)
+                .put("name",exercise?.name ?: "Unbekannte Übung")
+                .put("kategorie",exercise?.category ?: "")
+                .put("typ",if(exercise?.kind=="time")"Haltedauer" else "Wiederholungen")
+                .put("gewichtProSeite",exercise?.perSide ?: false)
+            val items=org.json.JSONArray()
+            for(set in rows.sortedBy {it.number}) {
+                val entry=org.json.JSONObject()
+                    .put("satz",set.number)
+                    .put("gewichtKg",set.weight ?: org.json.JSONObject.NULL)
+                    .put("wiederholungen",set.reps ?: org.json.JSONObject.NULL)
+                    .put("sekunden",set.seconds ?: org.json.JSONObject.NULL)
+                    .put("rir",set.rir ?: org.json.JSONObject.NULL)
+                items.put(entry)
+            }
+            item.put("saetze",items)
+            list.put(item)
+        }
+        result.put("uebungen",list)
+        return result.toString(2).toByteArray(Charsets.UTF_8)
+    }
+
+    fun workoutFilename(store:Store,sessionId:Long):String {
+        val session=store.session(sessionId) ?: error("Trainingseinheit nicht gefunden.")
+        val day=SimpleDateFormat("yyyy-MM-dd",Locale.ROOT).format(Date(session.timestamp))
+        return "Trainingsapp-"+day+"-"+session.plan+"-"+session.id+".json"
+    }
+
     private fun csvCell(value:Any?):String {
         val s=value?.toString() ?: ""
         return "\"" + s.replace("\"","\"\"") + "\""
