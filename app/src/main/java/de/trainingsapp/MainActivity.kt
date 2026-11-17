@@ -39,6 +39,10 @@ class MainActivity : Activity() {
     private var workoutCardioType=""
     private var workoutCardioMinutes=0
     private var exportType="xlsx"
+    private var viewingPhaseId:Long?=null
+    private var activePhaseId:Long=1L
+    private var workoutTimestamp:Long=System.currentTimeMillis()
+    private var expandedCategory:String?=null
     private var activeScroll: ScrollView?=null
     private var renderedTab=""
 
@@ -51,6 +55,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         store=Store(this)
+        viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
         restoreDraft()
         render()
     }
@@ -61,6 +66,8 @@ class MainActivity : Activity() {
         val active=draft ?: return
         val root=JSONObject()
             .put("plan",activePlan)
+            .put("phaseId",activePhaseId)
+            .put("trainingDate",workoutTimestamp)
             .put("cardio",workoutCardio)
             .put("cardioType",workoutCardioType)
             .put("cardioMinutes",workoutCardioMinutes)
@@ -102,6 +109,8 @@ class MainActivity : Activity() {
             }
             if(restored.isNotEmpty()) {
                 activePlan=root.optString("plan","A").takeIf {it in listOf("A","B")} ?: "A"
+                activePhaseId=root.optLong("phaseId",1L)
+                workoutTimestamp=root.optLong("trainingDate",System.currentTimeMillis())
                 workoutCardio=root.optBoolean("cardio",false)
                 workoutCardioType=root.optString("cardioType","")
                 workoutCardioMinutes=root.optInt("cardioMinutes",0)
@@ -226,7 +235,7 @@ class MainActivity : Activity() {
         val r=row()
         for(name in listOf("A","B")) {
             val b=button("Training $name",plan==name) {
-                plan=name;render()
+                plan=name;expandedCategory=null;render()
             }
             r.addView(b,LinearLayout.LayoutParams(0,dp(45),1f))
             if(name=="A")add(r,View(this),7,1)
