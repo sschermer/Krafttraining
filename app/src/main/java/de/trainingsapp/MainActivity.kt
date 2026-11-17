@@ -259,6 +259,12 @@ class MainActivity : Activity() {
     }
 
     private fun askCardio() {
+        if(draft!=null) {
+            tab="Training"
+            render()
+            info("Bitte zuerst das laufende Training abschließen oder verwerfen.")
+            return
+        }
         if(store.planEntries(plan).isEmpty()) {info("Füge dem Trainingsplan zuerst Übungen hinzu.");return}
         val box=column().apply {setPadding(dp(20),dp(6),dp(20),0)}
         add(box,text("Hast du vor diesem Krafttraining Kondition gemacht?",15f))
@@ -278,13 +284,15 @@ class MainActivity : Activity() {
                 workoutCardio=yes.isChecked
                 workoutCardioType=if(yes.isChecked)type.text.toString().trim() else ""
                 workoutCardioMinutes=if(yes.isChecked)minutes.text.toString().toIntOrNull() ?: 0 else 0
+                activePlan=plan
                 draft=store.newDraft(plan)
+                saveDraft()
                 tab="Training";render()
             }.show()
     }
 
     private fun workout() {
-        title("Training $plan","Vorwerte sind vorausgefüllt. RIR wird neu eingetragen.")
+        title("Training $activePlan","Vorwerte sind Vorschläge: Erledigte Sätze bitte mit ✓ bestätigen.")
         if(workoutCardio) {
             val c=card(page)
             add(c,text("Vorher Kondition: "+(workoutCardioType.ifBlank{"Ja"})+
@@ -298,66 +306,101 @@ class MainActivity : Activity() {
                 (if(item.exercise.perSide)"Gewicht in kg pro Seite" else "Gewicht in kg (optional)")+" · Wiederholungen",12f,false,muted))
             gap(c,9)
             val headings=row()
-            add(headings,text("Satz",12f,true,muted),42)
+            add(headings,text("Satz",11f,true,muted),30)
             if(item.exercise.kind=="time") {
-                add(headings,text("Sekunden",12f,true,muted),95)
-                add(headings,text("RIR (opt.)",12f,true,muted),100)
+                add(headings,text("Sek.",11f,true,muted),80)
+                add(headings,text("RIR",11f,true,muted),64)
             } else {
-                add(headings,text("kg",12f,true,muted),85)
-                add(headings,text("Wdh.",12f,true,muted),85)
-                add(headings,text("RIR (opt.)",12f,true,muted),95)
+                add(headings,text("kg",11f,true,muted),73)
+                add(headings,text("Wdh.",11f,true,muted),66)
+                add(headings,text("RIR",11f,true,muted),64)
             }
+            add(headings,text("OK",11f,true,muted),35)
             add(c,headings);gap(c,4)
             item.sets.forEachIndexed {i,s ->
                 val r=row()
-                add(r,text((i+1).toString()+".",14f,true),42)
+                add(r,text((i+1).toString()+".",14f,true),30)
                 if(item.exercise.kind=="time") {
                     val sec=edit(s.seconds,"Sek.",true)
-                    add(r,sec,90);watch(sec){s.seconds=it}
+                    add(r,sec,75);watch(sec){s.seconds=it;saveDraft()}
                 } else {
                     val kg=edit(s.weight,"kg",true)
-                    add(r,kg,80);watch(kg){s.weight=it}
+                    add(r,kg,68);watch(kg){s.weight=it;saveDraft()}
                     add(r,View(this),5,1)
                     val reps=edit(s.reps,"Wdh.",true)
-                    add(r,reps,80);watch(reps){s.reps=it}
+                    add(r,reps,61);watch(reps){s.reps=it;saveDraft()}
                 }
                 add(r,View(this),5,1)
                 val rir=edit(s.rir,"–",true)
-                add(r,rir,65);watch(rir){s.rir=it}
+                add(r,rir,55);watch(rir){s.rir=it;saveDraft()}
+                val complete=CheckBox(this).apply {
+                    text="✓"
+                    textSize=13f
+                    isChecked=s.completed
+                    buttonTintList=android.content.res.ColorStateList.valueOf(accent)
+                    setPadding(0,0,0,0)
+                    setOnCheckedChangeListener {button,checked ->
+                        val valid=if(item.exercise.kind=="time")
+                            (s.seconds.trim().toIntOrNull() ?: 0)>0
+                        else (s.reps.trim().toIntOrNull() ?: 0)>0
+                        if(checked && !valid) {
+                            info("Zuerst die Wiederholungen bzw. Sekunden eintragen.")
+                            button.isChecked=false
+                        } else {
+                            s.completed=checked
+                            saveDraft()
+                        }
+                    }
+                }
+                add(r,complete,43)
                 add(c,r);gap(c,7)
             }
             val controls=row()
             controls.addView(button("+ Satz",false) {
                 item.sets.add(SetDraft(weight=item.sets.lastOrNull()?.weight ?: ""))
+                saveDraft()
                 render()
             },LinearLayout.LayoutParams(0,dp(44),1f))
             if(item.sets.size>2) {
                 add(controls,View(this),8,1)
                 controls.addView(button("− Letzter Satz",false) {
-                    item.sets.removeAt(item.sets.lastIndex);render()
+                    item.sets.removeAt(item.sets.lastIndex);saveDraft();render()
                 },LinearLayout.LayoutParams(0,dp(44),1f))
             }
             add(c,controls)
         }
         add(page,button("Training abschließen und speichern") {
-            val valid=list.any {item->item.sets.any {
-                if(item.exercise.kind=="time") (it.seconds.toIntOrNull() ?: 0)>0
-                else (it.reps.toIntOrNull() ?: 0)>0
+            val confirmed=list.sumOf {item->item.sets.count {it.completed} }
+            if(confirmed==0) {
+                info("Bitte mindestens einen absolvierten Satz mit ✓ bestätigen.")
+                return@button
+            }
+            val invalid=list.any {item->item.sets.any {set->
+                set.completed && (if(item.exercise.kind=="time")
+                    (set.seconds.trim().toIntOrNull() ?: 0)<=0
+                else (set.reps.trim().toIntOrNull() ?: 0)<=0)
             }}
-            if(!valid) {info("Trage mindestens einen absolvierten Satz ein.");return@button}
+            if(invalid) {info("Bitte markierte Sätze prüfen.");return@button}
             AlertDialog.Builder(this).setTitle("Training abschließen?")
-                .setMessage("Die erfassten Sätze werden dauerhaft gespeichert.")
+                .setMessage("$confirmed bestätigte Sätze werden dauerhaft gespeichert. Unbestätigte Vorschläge werden nicht übernommen.")
                 .setNegativeButton("Weitertrainieren",null).setPositiveButton("Speichern"){_,_->
-                    store.saveSession(plan,workoutCardio,workoutCardioType,workoutCardioMinutes,list)
-                    draft=null;tab="Verlauf";analysis="Tabelle";render()
-                    info("Training gespeichert.")
+                    try {
+                        store.saveSession(activePlan,workoutCardio,workoutCardioType,workoutCardioMinutes,list)
+                        clearDraft()
+                        tab="Verlauf";analysis="Tabelle";render()
+                        info("Training gespeichert.")
+                    } catch(e:Exception) {
+                        AlertDialog.Builder(this).setTitle("Speichern nicht möglich")
+                            .setMessage(e.message ?: "Unbekannter Fehler")
+                            .setPositiveButton("OK",null).show()
+                    }
                 }.show()
         });gap(page,10)
         add(page,button("Training abbrechen",false) {
             AlertDialog.Builder(this).setTitle("Training verwerfen?")
                 .setMessage("Nicht gespeicherte Eingaben gehen verloren.")
                 .setNegativeButton("Zurück",null).setPositiveButton("Verwerfen"){_,_->
-                    draft=null;tab="Start";render()
+                    clearDraft();tab="Start";render()
                 }.show()
         })
     }
@@ -627,7 +670,7 @@ class MainActivity : Activity() {
         })
         val help=card(page)
         add(help,text("Bedienung",17f,true));gap(help,5)
-        add(help,text("Training: zwei Sätze sind voreingestellt. Über „+ Satz“ fügst du weitere hinzu. RIR ist optional. Einheiten werden erst beim Abschluss gespeichert.",13f))
+        add(help,text("Training: zwei Sätze sind voreingestellt. Über „+ Satz“ fügst du weitere hinzu. Vorwerte sind nur Vorschläge; erledigte Sätze mit ✓ bestätigen. RIR ist optional. Angefangene Trainings bleiben auch nach Schließen der App erhalten.",13f))
         gap(help,5)
         add(help,text("Fortschrittstabelle: Das neueste Training steht immer rechts. Jede Zelle zeigt Gewicht / Wiederholungen oder Sekunden mit „s“.",13f))
     }
@@ -656,7 +699,7 @@ class MainActivity : Activity() {
             } else if(requestCode==502) {
                 val backup=contentResolver.openInputStream(uri)?.bufferedReader()?.use {it.readText()}
                     ?: error("Datei nicht lesbar")
-                store.restoreJson(backup);draft=null;tab="Start";render()
+                store.restoreJson(backup);clearDraft();tab="Start";render()
                 info("Datensicherung wiederhergestellt.")
             }
         } catch(e:Exception) {
