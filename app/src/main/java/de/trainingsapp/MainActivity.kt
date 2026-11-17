@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     private var workoutCardioType=""
     private var workoutCardioMinutes=0
     private var exportType="xlsx"
+    private var exportWorkoutId:Long?=null
     private var viewingPhaseId:Long?=null
     private var activePhaseId:Long=1L
     private var workoutTimestamp:Long=System.currentTimeMillis()
@@ -545,10 +546,16 @@ class MainActivity : Activity() {
                 .setMessage("$confirmed bestätigte Sätze werden dauerhaft gespeichert. Unbestätigte Vorschläge werden nicht übernommen.")
                 .setNegativeButton("Weitertrainieren",null).setPositiveButton("Speichern"){_,_->
                     try {
-                        store.saveSession(activePlan,workoutCardio,workoutCardioType,workoutCardioMinutes,list,activePhaseId,workoutTimestamp)
+                        val savedId=store.saveSession(activePlan,workoutCardio,workoutCardioType,
+                            workoutCardioMinutes,list,activePhaseId,workoutTimestamp)
                         clearDraft()
                         tab="Verlauf";analysis="Tabelle";render()
-                        info("Training gespeichert.")
+                        AlertDialog.Builder(this)
+                            .setTitle("Training gespeichert")
+                            .setMessage("Möchtest du dieses Training als JSON-Datei für eine Auswertung mit ChatGPT herunterladen?")
+                            .setNegativeButton("Später",null)
+                            .setPositiveButton("JSON herunterladen"){_,_->saveWorkoutJson(savedId)}
+                            .show()
                     } catch(e:Exception) {
                         AlertDialog.Builder(this).setTitle("Speichern nicht möglich")
                             .setMessage(e.message ?: "Unbekannter Fehler")
@@ -808,6 +815,16 @@ class MainActivity : Activity() {
             val values=row()
             for(s in sessions) {
                 val result=cell(store.formatCell(s.id,ex),resultWidth,false,exerciseHeight,2)
+                when(store.progressDirection(s,ex)) {
+                    1 -> {
+                        result.background=shape(Color.rgb(226,246,232),0,Color.rgb(152,214,171))
+                        result.setTextColor(Color.rgb(22,108,55))
+                    }
+                    -1 -> {
+                        result.background=shape(Color.rgb(255,234,232),0,Color.rgb(244,168,163))
+                        result.setTextColor(Color.rgb(158,42,45))
+                    }
+                }
                 result.setOnClickListener {sessionDetails(s,ex)}
                 values.addView(result)
             }
@@ -818,6 +835,10 @@ class MainActivity : Activity() {
         add(page,whole)
         scroll.post {scroll.fullScroll(View.FOCUS_RIGHT)}
         gap(page,10)
+        add(page,text("Grün = Steigerung · Rot = Verminderung gegenüber dem letzten Training mit dieser Übung. Gleich, gemischt oder nicht vergleichbar = neutral.",12f,false,muted))
+        gap(page,6)
+        add(page,text("Vergleich bei gleicher Satzanzahl anhand von kg, Wiederholungen bzw. Sekunden; RIR bleibt unberücksichtigt.",11f,false,muted))
+        gap(page,6)
         add(page,text("Beispiel: 30 / 10-10 = 30 kg pro Seite, 10 und 10 Wdh. · 45s-40s = Haltedauer.",12f,false,muted))
         gap(page,16)
         add(page,text("Gespeicherte Trainingseinheiten",17f,true))
@@ -831,6 +852,8 @@ class MainActivity : Activity() {
             r.addView(left,LinearLayout.LayoutParams(0,-2,1f))
             add(r,button("Bearbeiten",false){editSessionDialog(training)},105)
             add(box,r)
+            gap(box,7)
+            add(box,button("Training als JSON herunterladen",false){saveWorkoutJson(training.id)})
         }
     }
     private fun cell(value:String,width:Int,bold:Boolean,height:Int,lines:Int):TextView =
@@ -1133,8 +1156,12 @@ class MainActivity : Activity() {
         add(help,text("Fortschrittstabelle: Das neueste Training steht immer rechts. Jede Zelle zeigt Gewicht / Wiederholungen oder Sekunden mit „s“.",13f))
     }
 
-    private fun saveFile(format:String,mime:String,name:String) {
+    private fun saveWorkoutJson(sessionId:Long) {
+        saveFile("workout_json","application/json",DataExport.workoutFilename(store,sessionId),sessionId)
+    }
+    private fun saveFile(format:String,mime:String,name:String,sessionId:Long?=null) {
         exportType=format
+        exportWorkoutId=sessionId
         startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE);type=mime
             putExtra(Intent.EXTRA_TITLE,name)
@@ -1150,9 +1177,12 @@ class MainActivity : Activity() {
                 val bytes=when(exportType) {
                     "xlsx"->DataExport.xlsx(store)
                     "csv"->DataExport.csv(store)
+                    "workout_json"->DataExport.workoutJson(store,
+                        exportWorkoutId ?: error("Trainingseinheit fehlt."))
                     else->store.backupJson().toByteArray(Charsets.UTF_8)
                 }
-                contentResolver.openOutputStream(uri)?.use {it.write(bytes)}
+                val output=contentResolver.openOutputStream(uri) ?: error("Datei konnte nicht geöffnet werden.")
+                output.use {it.write(bytes)}
                 info("Datei gespeichert.")
             } else if(requestCode==502) {
                 val backup=contentResolver.openInputStream(uri)?.bufferedReader()?.use {it.readText()}
