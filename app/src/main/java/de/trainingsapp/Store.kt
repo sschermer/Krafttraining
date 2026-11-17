@@ -312,6 +312,13 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         writableDatabase.insertOrThrow("body_weights",null,ContentValues().apply {
             put("timestamp",timestamp);put("kg",kg)
         })
+    fun updateBodyWeight(id:Long,kg:Double,timestamp:Long) {
+        require(kg>0.0 && kg<=500.0 && timestamp>0L) {"Bitte gültige Messwerte eingeben."}
+        val updated=writableDatabase.update("body_weights",ContentValues().apply {
+            put("kg",kg);put("timestamp",timestamp)
+        },"id=?",arrayOf(id.toString()))
+        require(updated==1) {"Diese Gewichtsmessung wurde nicht gefunden."}
+    }
     fun deleteBodyWeight(id:Long) { writableDatabase.delete("body_weights","id=?",arrayOf(id.toString())) }
     fun progressExercises(plan:String,phaseId:Long?=null):List<Exercise> {
         val ids=if(phaseId!=null) {
