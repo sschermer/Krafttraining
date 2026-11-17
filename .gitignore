@@ -6,4 +6,7 @@ build/
 **/build/
 *.jks
 *.keystore
+*.p12
+*.b64
+*signing*.properties
 .DS_Store
