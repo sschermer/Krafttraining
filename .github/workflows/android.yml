@@ -67,7 +67,7 @@ jobs:
           APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+          ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/.*certificate SHA-256 digest:[[:space:]]*//p' | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
           EXPECTED="C1145F10EDACA6164AD111DB5D832BE885238FACF71B76408D7A95874EC43987"
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
             echo "::error::Unexpected signing certificate. Refusing to publish."
