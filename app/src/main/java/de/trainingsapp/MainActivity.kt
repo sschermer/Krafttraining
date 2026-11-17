@@ -242,17 +242,103 @@ class MainActivity : Activity() {
         }
         add(parent,r);gap(parent,14)
     }
-    private fun home() {
-        title("Übersicht","Training A oder B jederzeit frei wählen.")
-        planSelector(page)
+    private fun phaseHeader() {
+        val active=store.activePhase()
         val c=card(page)
-        add(c,text("Nächstes Training: $plan",18f,true));gap(c,7)
-        store.planEntries(plan).forEach { (exercise,_) ->
-            add(c,text("• "+exercise.name,14f))
+        add(c,text("Trainingsphasen",18f,true));gap(c,5)
+        if(active!=null) {
+            add(c,text(active.name,16f,true));gap(c,3)
+            add(c,text("Aktuelle Phase · seit "+date(active.startedAt),12f,false,muted));gap(c,10)
+            add(c,button("Diese Trainingsphase abschließen",false){finishPhaseDialog(active)})
+        } else {
+            add(c,text("Derzeit keine aktive Trainingsphase.",14f));gap(c,5)
+            add(c,text("Erstelle eine neue Phase. Alte Pläne und Ergebnisse bleiben erhalten.",12f,false,muted))
         }
-        gap(c,12)
-        add(c,button("Training $plan beginnen") {askCardio()})
-        gap(page,5)
+    }
+
+    private fun finishPhaseDialog(current:TrainingPhase) {
+        if(draft!=null) {
+            info("Bitte zuerst das begonnene Training abschließen oder verwerfen.")
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Trainingsphase abschließen?")
+            .setMessage("Die Pläne A und B aus „"+current.name+
+                "“ werden archiviert. Alle Trainingsdaten bleiben abrufbar. " +
+                "Danach kannst du über „Training erstellen“ eine neue Phase anlegen.")
+            .setNegativeButton("Abbrechen",null)
+            .setPositiveButton("Abschließen") {_,_->
+                try {
+                    store.finishPhase(current.id)
+                    viewingPhaseId=current.id
+                    expandedCategory=null
+                    render()
+                    info("Trainingsphase archiviert.")
+                } catch(e:Exception) {info(e.message ?: "Abschluss fehlgeschlagen.")}
+            }.show()
+    }
+
+    private fun createPhaseDialog() {
+        if(draft!=null) {
+            info("Bitte zuerst das begonnene Training abschließen oder verwerfen.")
+            return
+        }
+        val current=store.activePhase()
+        val previous=store.phases().firstOrNull()
+        val box=column().apply {setPadding(dp(20),dp(6),dp(20),0)}
+        add(box,text("Name der neuen Trainingsphase",13f,true))
+        val name=edit("Trainingsphase "+(store.phases().size+1),"Name")
+        add(box,name);gap(box,13)
+        val choices=listOf("Leeren A/B-Plan erstellen","A/B-Pläne der bisherigen Phase kopieren")
+        val chooser=RadioGroup(this).apply {orientation=RadioGroup.VERTICAL}
+        choices.forEachIndexed {index,label ->
+            val radio=RadioButton(this).apply {
+                id=View.generateViewId(); text=label;textSize=14f
+                tag=index
+                if(index==0) isChecked=true
+            }
+            add(chooser,radio)
+        }
+        if(previous==null) chooser.getChildAt(1).visibility=View.GONE
+        add(box,chooser);gap(box,9)
+        if(current!=null) {
+            add(box,text("Die aktuell laufende Phase wird beim Erstellen automatisch abgeschlossen. Ihre Ergebnisse bleiben unverändert erhalten.",12f,false,muted))
+        }
+        val dialog=AlertDialog.Builder(this).setTitle("Training erstellen")
+            .setView(box).setNegativeButton("Abbrechen",null)
+            .setPositiveButton("Erstellen",null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selected=chooser.findViewById<RadioButton>(chooser.checkedRadioButtonId)
+                val copy=selected?.tag==1 && previous!=null
+                try {
+                    val phase=store.createPhase(name.text.toString(),if(copy)previous?.id else null)
+                    viewingPhaseId=phase.id
+                    expandedCategory=null
+                    plan="A"
+                    tab="Training"
+                    dialog.dismiss()
+                    render()
+                    info("Neue Trainingsphase angelegt.")
+                } catch(e:Exception) {info(e.message ?: "Erstellen fehlgeschlagen.")}
+            }
+        }
+        dialog.show()
+    }
+
+    private fun home() {
+        title("Übersicht","Aktive Trainingsphase und Trainingsverlauf.")
+        phaseHeader()
+        val current=store.activePhase()
+        if(current!=null) {
+            planSelector(page)
+            val c=card(page)
+            add(c,text("Nächstes Training: "+current.name+" / "+plan,18f,true));gap(c,7)
+            store.planEntries(plan,current.id).forEach { (exercise,_) ->
+                add(c,text("• "+exercise.name,14f))
+            }
+            gap(c,12)
+            add(c,button("Training $plan beginnen") {askCardio()})
+        }
         val recent=store.sessions().lastOrNull()
         val summary=card(page)
         add(summary,text("Letztes Training",17f,true));gap(summary,5)
@@ -271,6 +357,12 @@ class MainActivity : Activity() {
             add(running,text("Training $activePlan noch nicht abgeschlossen",15f,true))
             add(running,button("Weitertrainieren"){tab="Training";render()})
         }
+        gap(page,9)
+        add(page,button("+ Training erstellen") {createPhaseDialog()})
+        gap(page,6)
+        add(page,button("Frühere Trainingsphasen ansehen",false) {
+            tab="Verlauf";analysis="Tabelle";render()
+        })
     }
 
     private fun askCardio() {
