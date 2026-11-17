@@ -615,25 +615,48 @@ class MainActivity : Activity() {
     }
 
     private fun catalog() {
-        title("Übungskatalog","43 Startübungen plus eigene Übungen; Kategorien frei wählbar.")
+        title("Übungskatalog","Eine Kategorie antippen: Übungen werden aufgeklappt.")
         add(page,button("+ Eigene Übung"){exerciseDialog(null)})
-        gap(page,15)
+        gap(page,13)
+        add(page,text("Im Bereich „Training“ wählst du die Übungen für A oder B aus.",12f,false,muted))
+        gap(page,12)
         val all=store.exercises()
-        for(category in all.map {it.category}.distinct()) {
-            add(page,text(category,17f,true));gap(page,6)
-            for(ex in all.filter {it.category==category}) {
-                val c=card(page)
-                val r=row()
-                val labels=column()
-                add(labels,text(ex.name,14f,true));gap(labels,2)
-                add(labels,text((if(ex.kind=="time")"Sekunden" else "Wiederholungen")+
-                    " · "+ex.equipment,11f,false,muted))
-                r.addView(labels,LinearLayout.LayoutParams(0,-2,1f))
-                add(r,button("Bearbeiten",false){exerciseDialog(ex)},100)
-                add(c,r)
+        val chosen=store.activePhase()?.let {store.planEntries(plan,it.id).map {pair->pair.first.id}.toSet()} ?: emptySet()
+        for(category in (Store.CATEGORIES+all.map {it.category}).distinct()) {
+            val exercises=all.filter {it.category==category}
+            if(exercises.isEmpty())continue
+            val count=exercises.count {it.id in chosen}
+            val opened=catalogExpandedCategory==category
+            val box=card(page)
+            val header=row()
+            val heading=column()
+            add(heading,text(category+(if(count>0)" ($count)" else ""),15f,true))
+            add(heading,text(if(opened)"Zum Schließen antippen" else "Zum Anzeigen antippen",
+                11f,false,muted))
+            header.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
+            add(header,text(if(opened)"⌃" else "⌄",21f,true,accent),24)
+            header.setPadding(dp(2),dp(4),dp(2),dp(4))
+            header.setOnClickListener {
+                catalogExpandedCategory=if(opened)null else category
+                render()
+            }
+            add(box,header)
+            if(opened) {
+                gap(box,9)
+                for(ex in exercises) {
+                    val inner=column()
+                    add(inner,text((if(ex.id in chosen)"✓ " else "")+ex.name,14f,true))
+                    add(inner,text((if(ex.kind=="time")"Sekunden" else "Wiederholungen")+
+                        " · "+ex.equipment,11f,false,muted))
+                    gap(inner,5)
+                    add(inner,button("Übung bearbeiten",false){exerciseDialog(ex)})
+                    add(box,inner)
+                    gap(box,10)
+                }
             }
         }
     }
+
     private fun exerciseDialog(old:Exercise?) {
         val box=column().apply {setPadding(dp(20),dp(5),dp(20),0)}
         add(box,text("Übungsname",13f,true));val name=edit(old?.name ?: "","Name");add(box,name)
