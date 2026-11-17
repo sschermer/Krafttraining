@@ -149,3 +149,20 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Übungsnamen und Ergebniszellen besitzen dasselbe Zeilenraster (76 dp), die gesamte Kopfzeile 44 dp.
 - Namen können bis zu drei Zeilen haben; Datumsüberschriften erscheinen ohne Zeilenumbruch als `dd.MM.yy`.
 - Linke Übungsspalte bleibt fixiert, die Ergebnis-Spalten horizontal scrollen. Trainingsdaten und Datenbank bleiben unverändert.
+
+## Version 0.4.0 – Fortschrittsfarben und Einzeltraining-JSON
+
+### Fortschrittstabelle
+- Erzielte Fortschritte gegenüber dem vorherigen Training mit derselben Übung und demselben Trainingsplan (A/B) erscheinen **grün**, eindeutige Rückgänge **rot**.
+- Vergleichsbasis ist das tatsächliche Trainingsdatum (einschließlich rückwirkender Einträge), auch über Trainingsphasen hinweg.
+- Vergleichbar sind nur identische Satzzahlen mit vollständigen Werten. Je Satz werden Gewicht und Wiederholungen oder die Haltedauer betrachtet. Es ist ein Fortschritt, wenn mindestens ein Wert steigt und keiner fällt; entsprechend Rückgang, wenn mindestens einer fällt und keiner steigt.
+- Bei gemischten Ergebnissen, identischen Leistungen, fehlendem früheren Vergleich oder unterschiedlicher Satzzahl bleibt die Zelle **neutral**.
+- RIR wird bewusst nicht als Fortschrittsindikator verwendet. Das Schema ist ein konservativer Vergleich, keine trainingswissenschaftliche Gesamtbewertung.
+
+### Einzeltraining als JSON herunterladen
+- Nach dem Speichern fragt die App, ob dieses Training als JSON-Datei heruntergeladen werden soll. Ablehnen verändert die gespeicherte Einheit nicht.
+- Jede gespeicherte Einheit erhält auch im Verlauf einen eigenen Button **„Training als JSON herunterladen“**.
+- Die exportierte UTF-8-JSON enthält Datum/Uhrzeit, Phase, A/B, vorausgegangene Kondition, alle Übungen und die tatsächlich gespeicherten Sätze mit Gewicht, Wiederholungen, Sekunden und optional RIR.
+- Die JSON dient der Auswertung in ChatGPT oder anderen Werkzeugen und enthält nur die gewählte Trainingseinheit. Sie ist **keine Datenbank-Sicherung** und wird nicht durch die vorhandene Backup-Importfunktion akzeptiert.
+- Eine direkte Übergabe an einen ChatGPT-Chat ist ausdrücklich nicht vorgesehen.
+
