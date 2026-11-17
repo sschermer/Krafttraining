@@ -15,7 +15,7 @@ object DataExport {
         return "\"" + s.replace("\"","\"\"") + "\""
     }
     fun csv(store:Store):ByteArray {
-        val header=listOf("Datum","Training","Kondition vorher","Art Kondition","Minuten Kondition",
+        val header=listOf("Datum","Trainingsphase","Training","Kondition vorher","Art Kondition","Minuten Kondition",
             "Übung","Satz","Gewicht (kg)","Gewicht pro Seite","Wiederholungen","Sekunden","RIR")
         val lines=mutableListOf(header.joinToString(";") { csvCell(it) })
         for(session in store.sessions()) {
@@ -23,7 +23,7 @@ object DataExport {
             for(s in all) {
                 val e=store.exercise(s.exerciseId)
                 val row=listOf(
-                    date(session.timestamp), session.plan, if(session.cardio)"Ja" else "Nein",
+                    date(session.timestamp), store.phase(session.phaseId)?.name ?: "Trainingsphase "+session.phaseId, session.plan, if(session.cardio)"Ja" else "Nein",
                     session.cardioType, session.cardioMinutes, e?.name ?: "",
                     s.number, s.weight, if(e?.perSide==true)"Ja" else "Nein",
                     s.reps, s.seconds, s.rir
@@ -68,6 +68,14 @@ object DataExport {
     private fun table(store:Store,name:String):Pair<List<String>,List<List<Any?>>> {
         val columns=store.columns(name)
         val rows=store.rows(name)
+        if(name=="training_phases") {
+            return Pair(columns+listOf("beginn","abschluss"),rows.map {raw ->
+                raw+listOf(
+                    date((raw[columns.indexOf("started_at")] as Number).toLong()),
+                    raw[columns.indexOf("ended_at")]?.let {date((it as Number).toLong())}
+                )
+            })
+        }
         if(name=="sessions" || name=="body_weights") {
             val timeIndex=columns.indexOf("timestamp")
             val cols=columns.toMutableList().apply {add(timeIndex+1,"datum_uhrzeit")}
@@ -80,7 +88,7 @@ object DataExport {
     }
     fun xlsx(store:Store):ByteArray {
         val sheets=Store.TABLES.map { table(store,it) }
-        val names=listOf("Uebungen","Trainingsplaene","Trainingseinheiten","Einzelsaetze","Koerpergewicht")
+        val names=listOf("Trainingsphasen","Uebungen","Trainingsplaene","Trainingseinheiten","Einzelsaetze","Koerpergewicht")
         val out=ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
             fun add(path:String,content:String) {
