@@ -150,29 +150,85 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
             else { writableDatabase.update("exercises",v,"id=?",arrayOf(item.id.toString()));item.id }
     }
 
-    fun planEntries(plan: String): List<Pair<Exercise,Int>> =
-        query("""SELECT e.id,e.name,e.category,e.kind,e.equipment,e.per_side,e.archived,p.target_sets FROM plans p
-            JOIN exercises e ON e.id=p.exercise_id WHERE p.plan=? ORDER BY p.position""",
-            arrayOf(plan)) { c -> Pair(c.asExercise(),c.getInt(7)) }
+    fun phases():List<TrainingPhase> =
+        query("SELECT id,name,started_at,ended_at FROM training_phases ORDER BY id DESC") {
+            TrainingPhase(it.getLong(0),it.getString(1),it.getLong(2),
+                if(it.isNull(3)) null else it.getLong(3))
+        }
+    fun activePhase():TrainingPhase? = phases().firstOrNull { it.active }
+    fun phase(id:Long):TrainingPhase? = phases().firstOrNull { it.id==id }
 
-    fun addToPlan(plan: String, exerciseId: Long) {
-        val v=ContentValues().apply {
+    fun finishPhase(id:Long) {
+        val active=activePhase() ?: return
+        require(active.id==id) { "Nur die aktuelle Phase kann abgeschlossen werden." }
+        writableDatabase.execSQL("UPDATE training_phases SET ended_at=? WHERE id=? AND ended_at IS NULL",
+            arrayOf(System.currentTimeMillis(),id))
+    }
+
+    // A new plan is an independent snapshot. Past training data is immutable until
+    // the user explicitly edits an individual saved workout.
+    fun createPhase(name:String,copyFromId:Long?=null):TrainingPhase {
+        require(name.trim().isNotEmpty()) { "Bitte einen Namen eingeben." }
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            val active=activePhase()
+            val source=copyFromId?.let { id -> phase(id) ?: error("Vorlage nicht gefunden.") }
+            active?.let {
+                db.execSQL("UPDATE training_phases SET ended_at=? WHERE id=? AND ended_at IS NULL",
+                    arrayOf(System.currentTimeMillis(),it.id))
+            }
+            val now=System.currentTimeMillis()
+            val id=db.insertOrThrow("training_phases",null,ContentValues().apply {
+                put("name",name.trim());put("started_at",now)
+            })
+            if(source!=null) db.execSQL("""INSERT INTO plans(plan,exercise_id,position,target_sets,phase_id)
+                SELECT plan,exercise_id,position,target_sets,? FROM plans WHERE phase_id=?""",
+                arrayOf(id,source.id))
+            db.setTransactionSuccessful()
+            return TrainingPhase(id,name.trim(),now,null)
+        } finally {db.endTransaction()}
+    }
+
+    fun planEntries(plan:String,phaseId:Long=activePhase()?.id ?: 1L):List<Pair<Exercise,Int>> =
+        query("""SELECT e.id,e.name,e.category,e.kind,e.equipment,e.per_side,e.archived,p.target_sets
+            FROM plans p JOIN exercises e ON e.id=p.exercise_id
+            WHERE p.plan=? AND p.phase_id=? ORDER BY p.position""",
+            arrayOf(plan,phaseId.toString())) { c -> Pair(c.asExercise(),c.getInt(7)) }
+
+    fun addToPlan(plan:String,exerciseId:Long,phaseId:Long=activePhase()?.id ?: 1L) {
+        require(activePhase()?.id==phaseId) { "Abgeschlossene Trainingsphasen sind schreibgeschützt." }
+        if(planEntries(plan,phaseId).any { it.first.id==exerciseId })return
+        writableDatabase.insertOrThrow("plans",null,ContentValues().apply {
             put("plan",plan);put("exercise_id",exerciseId)
-            put("position",(planEntries(plan).size));put("target_sets",2)
-        }
-        if(planEntries(plan).none {it.first.id==exerciseId}) writableDatabase.insert("plans",null,v)
+            put("position",planEntries(plan,phaseId).size);put("target_sets",2);put("phase_id",phaseId)
+        })
     }
-    fun removeFromPlan(plan:String,exerciseId:Long) {
-        writableDatabase.delete("plans","plan=? AND exercise_id=?",arrayOf(plan,exerciseId.toString()))
+    fun removeFromPlan(plan:String,exerciseId:Long,phaseId:Long=activePhase()?.id ?: 1L) {
+        require(activePhase()?.id==phaseId) { "Abgeschlossene Trainingsphasen sind schreibgeschützt." }
+        writableDatabase.delete("plans","plan=? AND exercise_id=? AND phase_id=?",
+            arrayOf(plan,exerciseId.toString(),phaseId.toString()))
     }
 
-    fun sessions(plan: String? = null): List<TrainingSession> =
-        query("SELECT id,timestamp,plan,cardio,cardio_type,cardio_minutes FROM sessions " +
-            (if(plan==null) "" else "WHERE plan=? ") + "ORDER BY timestamp ASC,id ASC",
-            if(plan==null) emptyArray() else arrayOf(plan)) { c ->
+    fun sessions(plan:String?=null,phaseId:Long?=null):List<TrainingSession> {
+        val conditions=mutableListOf<String>()
+        val args=mutableListOf<String>()
+        if(plan!=null) {conditions.add("plan=?");args.add(plan)}
+        if(phaseId!=null) {conditions.add("phase_id=?");args.add(phaseId.toString())}
+        val where=if(conditions.isEmpty()) "" else " WHERE "+conditions.joinToString(" AND ")
+        return query("""SELECT id,timestamp,plan,cardio,cardio_type,cardio_minutes,phase_id
+            FROM sessions$where ORDER BY timestamp ASC,id ASC""",args.toTypedArray()) { c ->
             TrainingSession(c.getLong(0),c.getLong(1),c.getString(2),
-                c.getInt(3)!=0,c.getString(4),c.getInt(5))
+                c.getInt(3)!=0,c.getString(4),c.getInt(5),c.getLong(6))
         }
+    }
+    fun session(id:Long):TrainingSession? =
+        query("""SELECT id,timestamp,plan,cardio,cardio_type,cardio_minutes,phase_id
+            FROM sessions WHERE id=?""",arrayOf(id.toString())) { c ->
+            TrainingSession(c.getLong(0),c.getLong(1),c.getString(2),
+                c.getInt(3)!=0,c.getString(4),c.getInt(5),c.getLong(6))
+        }.firstOrNull()
+
     fun sets(sessionId:Long):List<TrainingSet> = query(
         "SELECT id,session_id,exercise_id,set_number,weight,reps,seconds,rir FROM training_sets WHERE session_id=? ORDER BY set_number",
         arrayOf(sessionId.toString())) { c ->
