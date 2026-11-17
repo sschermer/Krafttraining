@@ -41,3 +41,57 @@ Daten bleiben lokal auf dem Gerät. Eine vollständige JSON-Sicherung dient zum 
 - Signierte Release-APK nach erfolgreichem Test
 
 Keine personenbezogenen Trainingsdaten in das GitHub-Repository hochladen.
+
+
+# Android-Signierung und Updates
+
+## Einmalige Einrichtung
+
+Die Trainingsapp verwendet ab Version 0.1.1 einen **festen privaten Release-Schlüssel**.
+Die Datei `Trainingsapp-Signierschluessel.p12` wird **niemals** in diesem öffentlichen Repository gespeichert.
+
+Der Besitzer erhält privat zwei Dateien:
+1. `Trainingsapp-Signierschluessel.p12` — dauerhafter privater Signierschlüssel; offline sichern.
+2. `Trainingsapp-GitHub-Secrets.txt` — enthält die beiden für GitHub Actions benötigten Geheimwerte; getrennt und geschützt sichern.
+
+In GitHub (am Laptop im Browser):
+1. `Settings → Secrets and variables → Actions → New repository secret` öffnen.
+2. `ANDROID_KEYSTORE_BASE64` mit dem gleichnamigen Wert aus der privaten Textdatei erstellen.
+3. `ANDROID_SIGNING_PASSWORD` mit dem gleichnamigen Wert erstellen.
+4. Unter `Actions → Android APK → Run workflow → Run workflow` einen neuen Build starten.
+5. Nach erfolgreicher Signaturprüfung erscheint eine aktualisierbare APK unter `Releases`.
+
+Die Signierkonfiguration liest den Keystore ausschließlich über GitHub Actions Secrets.
+Bei fehlenden Secrets baut der Workflow nur eine Debug-APK und veröffentlicht **keine**
+als signiert bezeichnete Release-APK.
+
+Der SHA-256-Zertifikatsfingerabdruck ist im Workflow hinterlegt. Signaturen, die
+nicht diesem privaten Schlüssel entsprechen, werden nicht veröffentlicht.
+
+## Wichtig beim Umstieg
+
+Die bestehende Version 0.1.0 ist mit einem temporären **Debug-Schlüssel** signiert.
+Android akzeptiert die neue Release-Signatur daher **nicht als direktes Update**
+über der alten Debug-APK.
+
+Falls bereits Trainingsdaten vorhanden sind:
+1. In der alten App **Daten → Sicherung exportieren (.json)** ausführen.
+2. Die JSON-Sicherung außerhalb der App speichern.
+3. Die alte Debug-App deinstallieren.
+4. Die neue **signierte** APK installieren.
+5. In der neuen App die JSON-Sicherung importieren.
+
+Danach können zukünftige **signierte** APKs mit derselben `applicationId`,
+demselben Schlüssel und höherer `versionCode` ohne Deinstallation installiert
+werden. Der Build verwendet dazu die steigende GitHub-Actions-Laufnummer.
+
+Der private Schlüssel und die zugehörigen Passwörter müssen dauerhaft sicher
+aufbewahrt werden. Gehen sie verloren, ist eine reibungslose Update-Kette
+nicht mehr möglich.
+
+## Technischer Status
+
+- Test-Builds (Debug): unabhängig von den Secrets
+- Signierter Build: nur auf `main` nach Einrichtung der Secrets
+- `apksigner verify` und Prüfung des Zertifikats vor der Veröffentlichung
+- Neue signierte Testversionen unter GitHub Releases, nicht nur Actions-Artefakten
