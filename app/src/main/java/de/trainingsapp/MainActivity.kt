@@ -39,6 +39,8 @@ class MainActivity : Activity() {
     private var workoutCardioType=""
     private var workoutCardioMinutes=0
     private var exportType="xlsx"
+    private var activeScroll: ScrollView?=null
+    private var renderedTab=""
 
     private val dark=Color.rgb(24,58,51)
     private val accent=Color.rgb(25,113,100)
@@ -178,6 +180,8 @@ class MainActivity : Activity() {
     private fun info(msg:String) {Toast.makeText(this,msg,Toast.LENGTH_LONG).show()}
 
     private fun render() {
+        val previousScroll=if(renderedTab==tab) activeScroll?.scrollY ?: 0 else 0
+        renderedTab=tab
         root=column().apply {setBackgroundColor(light)}
         setContentView(root)
         val header=column().apply {
@@ -187,6 +191,7 @@ class MainActivity : Activity() {
         add(header,text(if(draft!=null)"Training $activePlan läuft" else "Dein Training. Deine Entwicklung.",12f,false,Color.rgb(195,224,212)))
         add(root,header)
         val scroll=ScrollView(this).apply {isFillViewport=true;clipToPadding=false}
+        activeScroll=scroll
         page=column().apply {setPadding(dp(14),dp(16),dp(14),dp(20))}
         scroll.addView(page)
         root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
@@ -210,6 +215,7 @@ class MainActivity : Activity() {
             nav.addView(b,LinearLayout.LayoutParams(0,dp(55),1f))
         }
         add(root,nav)
+        if(previousScroll>0) scroll.post {scroll.scrollTo(0,previousScroll)}
     }
     private fun title(s:String,subtitle:String?=null) {
         add(page,text(s,22f,true));gap(page,4)
