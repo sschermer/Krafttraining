@@ -87,11 +87,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.2.0-build${GITHUB_RUN_NUMBER}"
-          NAME="Trainingsapp-v0.2.0-build${GITHUB_RUN_NUMBER}-signed.apk"
+          TAG="v0.3.0-build${GITHUB_RUN_NUMBER}"
+          NAME="Trainingsapp-v0.3.0-build${GITHUB_RUN_NUMBER}-signed.apk"
           cp app/build/outputs/apk/release/app-release.apk "$NAME"
           gh release create "$TAG" "$NAME" \
             --target "$GITHUB_SHA" \
-            --title "Trainingsapp 0.2.0 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
+            --title "Trainingsapp 0.3.0 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
             --prerelease \
             --notes "Dauerhaft signierte Testversion. Kuenftige APKs mit demselben Schluessel und hoeherem versionCode aktualisieren die App. Einmalige Neuinstallation nach der alten Debug-APK erforderlich."

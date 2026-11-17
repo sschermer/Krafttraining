@@ -109,3 +109,18 @@ nicht mehr möglich.
 ### Update-Hinweise
 
 **Erste signierte Installation:** Die alte Debug-APK hat eine andere Signatur. Vor deren Deinstallation eine JSON-Datensicherung erstellen, wenn Trainingsdaten vorhanden sind. Anschließend die erste signierte APK installieren und die Sicherung importieren. Danach können Versionen mit demselben Release-Schlüssel und höherer Versionsnummer ohne Neuinstallation aktualisiert werden. Die Signierung muss im CI erst mit beiden GitHub-Secrets eingerichtet sein.
+
+## Version 0.3.0 – Trainingsphasen, Datumsänderung und Kategorien
+
+- Datenbankversion 2: vorhandene Trainingsdaten/Übungen/Pläne werden **ohne Löschung** in die erste Trainingsphase überführt.
+- Auf Start und Training: **Training erstellen** → leeren A/B-Plan beginnen oder bisherigen Plan kopieren.
+- Die vorherige aktive Phase wird bei Erstellung der neuen Phase archiviert; alternativ explizit über **Trainingsphase abschließen**.
+- Archivierte Pläne bleiben nachvollziehbar und werden nicht rückwirkend verändert.
+- Auswahl des Trainingsplans: Kategorien zunächst geschlossen; **immer nur eine** geöffnet; Anzahl ausgewählter Übungen erscheint **in Klammern** hinter jeder Kategorie.
+- Die Trainingszeit kann vor und während der Erfassung frei auf ein zurückliegendes Datum/Uhrzeit eingestellt werden. Auch gespeicherte Einheiten lassen sich im Verlauf nachträglich bearbeiten (inkl. Sätzen, RIR und Konditionsangaben).
+- In der Auswertung lässt sich eine Phase oder **Alle Phasen** auswählen.
+- JSON-Backups enthalten jetzt die Trainingsphasen. **Alte Sicherungen (Formatversion 1) bleiben importierbar**.
+- CSV und XLSX enthalten Phasenzuordnung; die XLSX-Datei besitzt ein eigenes Blatt für Trainingsphasen.
+- Ein noch nicht abgeschlossenes Training blockiert den Phasenwechsel zum Schutz der Entwurfsdaten.
+
+Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und denselben privaten Signierschlüssel; GitHub Actions versieht sie mit fortlaufenden `versionCode`-Werten.

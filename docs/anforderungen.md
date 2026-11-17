@@ -25,3 +25,12 @@ Trainingszeiträume als explizite Plan-Snapshots; differenzierte Auswertungen un
 - Ein begonnenes Training und Änderungen an dessen Sätzen müssen einen Neustart der App überleben.
 - Eine während des Trainings geänderte Auswahl auf der Startseite darf nicht den A/B-Typ des aktiven Trainings verändern.
 - Datenbankänderungen dürfen ältere Trainingseinheiten nicht löschen.
+
+## Version 0.3.0 – verbindliche neue Regeln
+
+- Trainingseinheiten dürfen rückwirkend mit tatsächlichem Datum und Uhrzeit erfasst werden. Nachträgliche Korrektur des gespeicherten Trainings einschließlich Satzwerte ist möglich. Tabellen sortieren nach dem eingetragenen Trainingszeitpunkt.
+- Trainingsphasen verwalten eigene A/B-Pläne. Abschluss macht die Phase unveränderlich, ohne Trainingsdaten zu löschen. Beim Anlegen einer neuen Phase sind leerer Plan und Kopie der letzten Phase verfügbar.
+- Nur die aktive Phase ist beim Starten neuer Trainings auswählbar; archivierte Phasen sind für Historie und Auswertung weiterhin lesbar.
+- Übungsauswahl nach Kategorien, standardmäßig alle geschlossen. Nur eine Kategorie gleichzeitig aufklappbar. Bereits ausgewählte Übungen erhalten pro Kategorie einen Zähler in Klammern; ausgewählte Übungen tragen Häkchen.
+- Historische Pläne und Übungen dürfen nicht durch neue Trainingsphasen überschrieben werden.
+- Der Datenbankwechsel muss bestehende Daten erhalten, ältere Sicherungen importieren und neue Phasen exportieren.
