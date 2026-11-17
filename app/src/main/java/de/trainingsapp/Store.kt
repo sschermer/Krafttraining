@@ -23,7 +23,8 @@ data class TrainingSet(
 )
 data class BodyWeight(val id: Long, val timestamp: Long, val kg: Double)
 data class SetDraft(
-    var weight: String = "", var reps: String = "", var seconds: String = "", var rir: String = ""
+    var weight: String = "", var reps: String = "", var seconds: String = "",
+    var rir: String = "", var completed: Boolean = false
 )
 data class ExerciseDraft(val exercise: Exercise, val sets: MutableList<SetDraft>)
 
@@ -182,7 +183,31 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 1
         ExerciseDraft(exercise,rows)
     }.toMutableList()
 
+    // Only explicitly confirmed sets can enter the training history.
+    // The suggestions shown in the UI are never treated as completed sets.
     fun saveSession(plan:String, cardio:Boolean, cardioType:String, cardioMinutes:Int, entries:List<ExerciseDraft>):Long {
+        val confirmed=entries.flatMap { entry ->
+            entry.sets.mapIndexedNotNull { index, row ->
+                if(row.completed) Triple(entry.exercise,index,row) else null
+            }
+        }
+        require(confirmed.isNotEmpty()) { "Bitte mindestens einen Satz als erledigt markieren." }
+        for((exercise,_,row) in confirmed) {
+            val reps=row.reps.trim().toIntOrNull()
+            val seconds=row.seconds.trim().toIntOrNull()
+            require(if(exercise.kind=="time") seconds!=null && seconds>0 else reps!=null && reps>0) {
+                "Bitte einen gültigen Wert für ${exercise.name} eintragen."
+            }
+            val weight=row.weight.trim().replace(',','.').toDoubleOrNull()
+            val rir=row.rir.trim().replace(',','.').toDoubleOrNull()
+            require(row.weight.isBlank() || (weight!=null && weight>=0.0)) {
+                "Ungültiges Gewicht bei ${exercise.name}."
+            }
+            require(row.rir.isBlank() || (rir!=null && rir>=0.0)) {
+                "Ungültiger RIR-Wert bei ${exercise.name}."
+            }
+        }
+
         val db=writableDatabase
         db.beginTransaction()
         try {
@@ -191,23 +216,22 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 1
                 put("cardio",if(cardio)1 else 0);put("cardio_type",cardioType)
                 put("cardio_minutes",cardioMinutes)
             })
-            for(entry in entries) entry.sets.forEachIndexed { index, row ->
+            for((exercise,index,row) in confirmed) {
                 val reps=row.reps.trim().toIntOrNull()
                 val seconds=row.seconds.trim().toIntOrNull()
-                if(if(entry.exercise.kind=="time") seconds!=null && seconds>0 else reps!=null && reps>0) {
-                    db.insertOrThrow("training_sets",null,ContentValues().apply {
-                        put("session_id",sessionId);put("exercise_id",entry.exercise.id);put("set_number",index+1)
-                        row.weight.trim().replace(',','.').toDoubleOrNull()?.let {put("weight",it)}
-                        reps?.let {put("reps",it)}
-                        seconds?.let {put("seconds",it)}
-                        row.rir.trim().replace(',','.').toDoubleOrNull()?.let {put("rir",it)}
-                    })
-                }
+                db.insertOrThrow("training_sets",null,ContentValues().apply {
+                    put("session_id",sessionId);put("exercise_id",exercise.id);put("set_number",index+1)
+                    row.weight.trim().replace(',','.').toDoubleOrNull()?.let { put("weight",it) }
+                    reps?.let { put("reps",it) }
+                    seconds?.let { put("seconds",it) }
+                    row.rir.trim().replace(',','.').toDoubleOrNull()?.let { put("rir",it) }
+                })
             }
             db.setTransactionSuccessful()
             return sessionId
         } finally { db.endTransaction() }
     }
+
     fun bodyWeights():List<BodyWeight> = query("SELECT id,timestamp,kg FROM body_weights ORDER BY timestamp ASC,id ASC") {
         BodyWeight(it.getLong(0),it.getLong(1),it.getDouble(2))
     }
