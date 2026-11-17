@@ -365,6 +365,22 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun chooseTrainingDate(initial:Long,accept:(Long)->Unit) {
+        val cal=Calendar.getInstance().apply {timeInMillis=initial}
+        DatePickerDialog(this,{_,year,month,day->
+            cal.set(Calendar.YEAR,year)
+            cal.set(Calendar.MONTH,month)
+            cal.set(Calendar.DAY_OF_MONTH,day)
+            TimePickerDialog(this,{_,hour,minute->
+                cal.set(Calendar.HOUR_OF_DAY,hour)
+                cal.set(Calendar.MINUTE,minute)
+                cal.set(Calendar.SECOND,0)
+                cal.set(Calendar.MILLISECOND,0)
+                accept(cal.timeInMillis)
+            },cal.get(Calendar.HOUR_OF_DAY),cal.get(Calendar.MINUTE),true).show()
+        },cal.get(Calendar.YEAR),cal.get(Calendar.MONTH),cal.get(Calendar.DAY_OF_MONTH)).show()
+    }
+
     private fun askCardio() {
         if(draft!=null) {
             tab="Training"
@@ -372,8 +388,19 @@ class MainActivity : Activity() {
             info("Bitte zuerst das laufende Training abschließen oder verwerfen.")
             return
         }
-        if(store.planEntries(plan).isEmpty()) {info("Füge dem Trainingsplan zuerst Übungen hinzu.");return}
+        val phase=store.activePhase()
+        if(phase==null) {info("Erstelle zuerst eine neue Trainingsphase.");return}
+        if(store.planEntries(plan,phase.id).isEmpty()) {info("Füge dem Trainingsplan zuerst Übungen hinzu.");return}
         val box=column().apply {setPadding(dp(20),dp(6),dp(20),0)}
+        var chosenDate=System.currentTimeMillis()
+        val dateButton=button("Trainingsdatum: "+date(chosenDate),false){}
+        dateButton.setOnClickListener {
+            chooseTrainingDate(chosenDate) {
+                chosenDate=it
+                dateButton.text="Trainingsdatum: "+date(it)
+            }
+        }
+        add(box,dateButton);gap(box,12)
         add(box,text("Hast du vor diesem Krafttraining Kondition gemacht?",15f))
         val yes=CheckBox(this).apply {text="Ja, vorher Kondition gemacht"}
         add(box,yes)
@@ -392,7 +419,9 @@ class MainActivity : Activity() {
                 workoutCardioType=if(yes.isChecked)type.text.toString().trim() else ""
                 workoutCardioMinutes=if(yes.isChecked)minutes.text.toString().toIntOrNull() ?: 0 else 0
                 activePlan=plan
-                draft=store.newDraft(plan)
+                activePhaseId=phase.id
+                workoutTimestamp=chosenDate
+                draft=store.newDraft(plan,phase.id)
                 saveDraft()
                 tab="Training";render()
             }.show()
@@ -400,6 +429,15 @@ class MainActivity : Activity() {
 
     private fun workout() {
         title("Training $activePlan","Vorwerte sind Vorschläge: Erledigte Sätze bitte mit ✓ bestätigen.")
+        val dateCard=card(page)
+        add(dateCard,text("Trainingsdatum und Uhrzeit",14f,true));gap(dateCard,7)
+        add(dateCard,button(date(workoutTimestamp)+"  ·  Ändern",false) {
+            chooseTrainingDate(workoutTimestamp) {
+                workoutTimestamp=it
+                saveDraft()
+                render()
+            }
+        })
         if(workoutCardio) {
             val c=card(page)
             add(c,text("Vorher Kondition: "+(workoutCardioType.ifBlank{"Ja"})+
@@ -492,7 +530,7 @@ class MainActivity : Activity() {
                 .setMessage("$confirmed bestätigte Sätze werden dauerhaft gespeichert. Unbestätigte Vorschläge werden nicht übernommen.")
                 .setNegativeButton("Weitertrainieren",null).setPositiveButton("Speichern"){_,_->
                     try {
-                        store.saveSession(activePlan,workoutCardio,workoutCardioType,workoutCardioMinutes,list)
+                        store.saveSession(activePlan,workoutCardio,workoutCardioType,workoutCardioMinutes,list,activePhaseId,workoutTimestamp)
                         clearDraft()
                         tab="Verlauf";analysis="Tabelle";render()
                         info("Training gespeichert.")
