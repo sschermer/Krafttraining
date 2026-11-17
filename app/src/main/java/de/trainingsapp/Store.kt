@@ -236,12 +236,13 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
             c.optDouble(4),c.optInt(5),c.optInt(6),c.optDouble(7))
     }
     fun recentSets(exerciseId: Long): List<TrainingSet> {
-        val ids = query("""SELECT session_id FROM training_sets
-            WHERE exercise_id=? ORDER BY session_id DESC LIMIT 1""",
+        val ids = query("""SELECT t.session_id FROM training_sets t
+            JOIN sessions s ON s.id=t.session_id
+            WHERE t.exercise_id=? ORDER BY s.timestamp DESC,s.id DESC LIMIT 1""",
             arrayOf(exerciseId.toString())) { it.getLong(0) }
         return if(ids.isEmpty()) emptyList() else sets(ids[0]).filter { it.exerciseId==exerciseId }
     }
-    fun newDraft(plan: String): MutableList<ExerciseDraft> = planEntries(plan).map { (exercise, count) ->
+    fun newDraft(plan:String,phaseId:Long=activePhase()?.id ?: 1L):MutableList<ExerciseDraft> = planEntries(plan,phaseId).map { (exercise, count) ->
         val previous=recentSets(exercise.id)
         val rows=(0 until maxOf(2,count)).map { i ->
             val last=previous.getOrNull(i)
@@ -257,7 +258,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
 
     // Only explicitly confirmed sets can enter the training history.
     // The suggestions shown in the UI are never treated as completed sets.
-    fun saveSession(plan:String, cardio:Boolean, cardioType:String, cardioMinutes:Int, entries:List<ExerciseDraft>):Long {
+    fun saveSession(plan:String, cardio:Boolean, cardioType:String, cardioMinutes:Int, entries:List<ExerciseDraft>, phaseId:Long=activePhase()?.id ?: 1L, timestamp:Long=System.currentTimeMillis()):Long {
         val confirmed=entries.flatMap { entry ->
             entry.sets.mapIndexedNotNull { index, row ->
                 if(row.completed) Triple(entry.exercise,index,row) else null
@@ -284,7 +285,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         db.beginTransaction()
         try {
             val sessionId=db.insertOrThrow("sessions",null,ContentValues().apply {
-                put("timestamp",System.currentTimeMillis());put("plan",plan)
+                put("timestamp",timestamp);put("plan",plan);put("phase_id",phaseId)
                 put("cardio",if(cardio)1 else 0);put("cardio_type",cardioType)
                 put("cardio_minutes",cardioMinutes)
             })
@@ -312,15 +313,72 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
             put("timestamp",timestamp);put("kg",kg)
         })
     fun deleteBodyWeight(id:Long) { writableDatabase.delete("body_weights","id=?",arrayOf(id.toString())) }
-    fun progressExercises(plan:String):List<Exercise> {
-        val ids=query("""SELECT DISTINCT exercise_id FROM (
-             SELECT exercise_id FROM plans WHERE plan=?
-             UNION ALL
-             SELECT t.exercise_id FROM training_sets t
-             JOIN sessions s ON s.id=t.session_id WHERE s.plan=?
-        )""",arrayOf(plan,plan)) {it.getLong(0)}
+    fun progressExercises(plan:String,phaseId:Long?=null):List<Exercise> {
+        val ids=if(phaseId!=null) {
+            query("""SELECT DISTINCT exercise_id FROM (
+                SELECT exercise_id FROM plans WHERE plan=? AND phase_id=?
+                UNION ALL
+                SELECT t.exercise_id FROM training_sets t
+                JOIN sessions s ON s.id=t.session_id
+                WHERE s.plan=? AND s.phase_id=?
+            )""",arrayOf(plan,phaseId.toString(),plan,phaseId.toString())) {it.getLong(0)}
+        } else {
+            query("""SELECT DISTINCT exercise_id FROM (
+                SELECT exercise_id FROM plans WHERE plan=?
+                UNION ALL
+                SELECT t.exercise_id FROM training_sets t JOIN sessions s ON s.id=t.session_id
+                WHERE s.plan=?
+            )""",arrayOf(plan,plan)) {it.getLong(0)}
+        }
         return ids.mapNotNull {exercise(it)}.sortedBy {it.name}
     }
+
+    fun changeSessionDate(id:Long,timestamp:Long) {
+        require(timestamp>0L) {"Ungültiges Datum."}
+        require(session(id)!=null) {"Trainingseinheit nicht gefunden."}
+        writableDatabase.update("sessions",ContentValues().apply {put("timestamp",timestamp)},
+            "id=?",arrayOf(id.toString()))
+    }
+    fun updateSession(id:Long,timestamp:Long,cardio:Boolean,cardioType:String,
+        cardioMinutes:Int,entries:List<ExerciseDraft>) {
+        require(session(id)!=null) {"Trainingseinheit nicht gefunden."}
+        require(timestamp>0L) {"Ungültiges Datum."}
+        val selected=entries.flatMap {entry ->
+            entry.sets.mapIndexedNotNull {index,set ->
+                if(set.completed) Triple(entry.exercise,index,set) else null
+            }
+        }
+        require(selected.isNotEmpty()) {"Mindestens einen absolvierten Satz auswählen."}
+        for((ex,_,set) in selected) {
+            val value=if(ex.kind=="time") set.seconds.trim().toIntOrNull()
+                else set.reps.trim().toIntOrNull()
+            require(value!=null && value>0) {"Ungültiger Satz bei \${ex.name}."}
+            val weight=set.weight.trim().replace(',','.').toDoubleOrNull()
+            val rir=set.rir.trim().replace(',','.').toDoubleOrNull()
+            require(set.weight.isBlank() || (weight!=null && weight>=0)) {"Ungültiges Gewicht."}
+            require(set.rir.isBlank() || (rir!=null && rir>=0)) {"Ungültiger RIR-Wert."}
+        }
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            db.update("sessions",ContentValues().apply {
+                put("timestamp",timestamp);put("cardio",if(cardio)1 else 0)
+                put("cardio_type",cardioType);put("cardio_minutes",cardioMinutes)
+            },"id=?",arrayOf(id.toString()))
+            db.delete("training_sets","session_id=?",arrayOf(id.toString()))
+            for((ex,index,set) in selected) {
+                db.insertOrThrow("training_sets",null,ContentValues().apply {
+                    put("session_id",id);put("exercise_id",ex.id);put("set_number",index+1)
+                    set.weight.trim().replace(',','.').toDoubleOrNull()?.let {put("weight",it)}
+                    set.reps.trim().toIntOrNull()?.let {put("reps",it)}
+                    set.seconds.trim().toIntOrNull()?.let {put("seconds",it)}
+                    set.rir.trim().replace(',','.').toDoubleOrNull()?.let {put("rir",it)}
+                })
+            }
+            db.setTransactionSuccessful()
+        } finally {db.endTransaction()}
+    }
+
     fun formatCell(sessionId:Long,exercise:Exercise):String {
         val all=sets(sessionId).filter {it.exerciseId==exercise.id}.sortedBy {it.number}
         if(all.isEmpty()) return "–"
@@ -354,7 +412,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         }
     }
     fun backupJson():String {
-        val root=JSONObject().put("format","TrainingsappBackup").put("version",1)
+        val root=JSONObject().put("format","TrainingsappBackup").put("version",2)
         for(t in TABLES) {
             val columns=columns(t)
             val list=JSONArray()
@@ -369,15 +427,25 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
     }
     fun restoreJson(text:String) {
         val root=JSONObject(text)
-        require(root.optString("format")=="TrainingsappBackup" && root.optInt("version")==1) {
+        val version=root.optInt("version")
+        require(root.optString("format")=="TrainingsappBackup" && version in 1..2) {
             "Keine gültige Trainingsapp-Sicherung"
         }
-        for(t in TABLES) require(root.has(t)) {"Tabelle fehlt: $t"}
+        for(t in TABLES) if(t!="training_phases" || version==2) {
+            require(root.has(t)) {"Tabelle fehlt: $t"}
+        }
         val db=writableDatabase
         db.beginTransaction()
         try {
             for(t in TABLES.reversed()) db.delete(t,null,null)
             for(t in TABLES) {
+                if(version==1 && t=="training_phases") {
+                    db.insertOrThrow("training_phases",null,ContentValues().apply {
+                        put("id",1);put("name","Trainingsphase 1")
+                        put("started_at",System.currentTimeMillis())
+                    })
+                    continue
+                }
                 val list=root.getJSONArray(t)
                 val columns=columns(t)
                 for(i in 0 until list.length()) {
