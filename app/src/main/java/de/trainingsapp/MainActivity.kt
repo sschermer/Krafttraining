@@ -22,6 +22,8 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.max
 
 class MainActivity : Activity() {
@@ -30,6 +32,7 @@ class MainActivity : Activity() {
     private lateinit var page: LinearLayout
     private var tab="Start"
     private var plan="A"
+    private var activePlan="A"
     private var analysis="Tabelle"
     private var draft: MutableList<ExerciseDraft>?=null
     private var workoutCardio=false
@@ -46,7 +49,76 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         store=Store(this)
+        restoreDraft()
         render()
+    }
+    private fun workPrefs()=getSharedPreferences("unfinished_workout", MODE_PRIVATE)
+
+    // The pending workout is separate from the historical database.
+    private fun saveDraft() {
+        val active=draft ?: return
+        val root=JSONObject()
+            .put("plan",activePlan)
+            .put("cardio",workoutCardio)
+            .put("cardioType",workoutCardioType)
+            .put("cardioMinutes",workoutCardioMinutes)
+        val entries=JSONArray()
+        for(entry in active) {
+            val rows=JSONArray()
+            for(set in entry.sets) {
+                rows.put(JSONObject()
+                    .put("weight",set.weight).put("reps",set.reps)
+                    .put("seconds",set.seconds).put("rir",set.rir)
+                    .put("completed",set.completed))
+            }
+            entries.put(JSONObject().put("exerciseId",entry.exercise.id).put("sets",rows))
+        }
+        root.put("entries",entries)
+        workPrefs().edit().putString("active",root.toString()).apply()
+    }
+
+    private fun restoreDraft() {
+        val stored=workPrefs().getString("active",null) ?: return
+        try {
+            val root=JSONObject(stored)
+            val entries=root.getJSONArray("entries")
+            val restored=mutableListOf<ExerciseDraft>()
+            for(i in 0 until entries.length()) {
+                val item=entries.getJSONObject(i)
+                val exercise=store.exercise(item.getLong("exerciseId")) ?: continue
+                val rows=item.getJSONArray("sets")
+                val sets=mutableListOf<SetDraft>()
+                for(j in 0 until rows.length()) {
+                    val row=rows.getJSONObject(j)
+                    sets.add(SetDraft(
+                        row.optString("weight"),row.optString("reps"),
+                        row.optString("seconds"),row.optString("rir"),
+                        row.optBoolean("completed",false)
+                    ))
+                }
+                if(sets.isNotEmpty()) restored.add(ExerciseDraft(exercise,sets))
+            }
+            if(restored.isNotEmpty()) {
+                activePlan=root.optString("plan","A").takeIf {it in listOf("A","B")} ?: "A"
+                workoutCardio=root.optBoolean("cardio",false)
+                workoutCardioType=root.optString("cardioType","")
+                workoutCardioMinutes=root.optInt("cardioMinutes",0)
+                draft=restored
+            } else {
+                workPrefs().edit().remove("active").apply()
+            }
+        } catch(e:Exception) {
+            // Keep a malformed draft for diagnosis instead of overwriting it.
+            android.util.Log.e("Trainingsapp","Cannot restore unfinished workout",e)
+        }
+    }
+    private fun clearDraft() {
+        draft=null
+        workPrefs().edit().remove("active").commit()
+    }
+    override fun onPause() {
+        saveDraft()
+        super.onPause()
     }
     private fun dp(n:Int):Int=(n*resources.displayMetrics.density+0.5f).toInt()
     private fun shape(color:Int,radius:Int=14,stroke:Int?=null):GradientDrawable =
@@ -112,7 +184,7 @@ class MainActivity : Activity() {
             setBackgroundColor(dark);setPadding(dp(18),dp(14),dp(18),dp(13))
         }
         add(header,text("TRAININGSAPP",21f,true,Color.WHITE))
-        add(header,text(if(draft!=null)"Training $plan läuft" else "Dein Training. Deine Entwicklung.",12f,false,Color.rgb(195,224,212)))
+        add(header,text(if(draft!=null)"Training $activePlan läuft" else "Dein Training. Deine Entwicklung.",12f,false,Color.rgb(195,224,212)))
         add(root,header)
         val scroll=ScrollView(this).apply {isFillViewport=true;clipToPadding=false}
         page=column().apply {setPadding(dp(14),dp(16),dp(14),dp(20))}
@@ -181,7 +253,7 @@ class MainActivity : Activity() {
         add(w,button("+ Gewicht eintragen",false){weightDialog()})
         if(draft!=null) {
             val running=card(page)
-            add(running,text("Training noch nicht abgeschlossen",15f,true))
+            add(running,text("Training $activePlan noch nicht abgeschlossen",15f,true))
             add(running,button("Weitertrainieren"){tab="Training";render()})
         }
     }
