@@ -762,6 +762,117 @@ class MainActivity : Activity() {
             .setPositiveButton("Einheit bearbeiten"){_,_->editSessionDialog(s)}
             .show()
     }
+    private fun editSessionDialog(original:TrainingSession) {
+        val session=store.session(original.id) ?: run {
+            info("Trainingseinheit nicht gefunden.")
+            return
+        }
+        val rows=store.sets(session.id)
+        val edits=rows.groupBy {it.exerciseId}.mapNotNull {entry->
+            val ex=store.exercise(entry.key) ?: return@mapNotNull null
+            ExerciseDraft(ex,entry.value.sortedBy {it.number}.map {set->
+                SetDraft(
+                    set.weight?.let {formatNumber(it)} ?: "",
+                    set.reps?.toString() ?: "",
+                    set.seconds?.toString() ?: "",
+                    set.rir?.let {formatNumber(it)} ?: "",
+                    true
+                )
+            }.toMutableList())
+        }.toMutableList()
+        if(edits.isEmpty()) {info("Für diese Einheit sind keine Sätze vorhanden.");return}
+        var selectedDate=session.timestamp
+        val scroll=ScrollView(this).apply {isFillViewport=false}
+        val content=column().apply {setPadding(dp(15),dp(10),dp(15),dp(10))}
+        scroll.addView(content)
+        add(content,text("Tatsächliches Trainingsdatum",14f,true));gap(content,7)
+        val dateButton=button(date(selectedDate)+" · Ändern",false){}
+        dateButton.setOnClickListener {
+            chooseTrainingDate(selectedDate) {value->
+                selectedDate=value
+                dateButton.text=date(value)+" · Ändern"
+            }
+        }
+        add(content,dateButton);gap(content,13)
+        val cardioCheck=CheckBox(this).apply {
+            text="Vorher Kondition gemacht"
+            isChecked=session.cardio
+        }
+        add(content,cardioCheck)
+        val cardioType=edit(session.cardioType,"Art, z. B. Laufen")
+        add(content,cardioType);gap(content,5)
+        val cardioMinutes=edit(session.cardioMinutes.let{if(it>0)it.toString() else ""},"Minuten",true)
+        add(content,cardioMinutes);gap(content,14)
+        add(content,text("Sätze korrigieren",16f,true));gap(content,9)
+        val holder=column()
+        add(content,holder)
+        fun refreshRows() {
+            val oldScroll=scroll.scrollY
+            holder.removeAllViews()
+            for(item in edits) {
+                val c=card(holder)
+                add(c,text(item.exercise.name,15f,true));gap(c,7)
+                item.sets.forEachIndexed {index,set->
+                    val r=row()
+                    add(r,text((index+1).toString()+".",13f,true),28)
+                    if(item.exercise.kind=="time") {
+                        val secs=edit(set.seconds,"Sek.",true)
+                        add(r,secs,75);watch(secs){set.seconds=it}
+                    } else {
+                        val kg=edit(set.weight,"kg",true)
+                        add(r,kg,64);watch(kg){set.weight=it}
+                        add(r,View(this),4,1)
+                        val reps=edit(set.reps,"Wdh.",true)
+                        add(r,reps,60);watch(reps){set.reps=it}
+                    }
+                    add(r,View(this),4,1)
+                    val rir=edit(set.rir,"RIR",true)
+                    add(r,rir,55);watch(rir){set.rir=it}
+                    val done=CheckBox(this).apply {
+                        text="✓";textSize=12f
+                        isChecked=set.completed
+                        setOnCheckedChangeListener {_,checked->set.completed=checked}
+                    }
+                    add(r,done,46)
+                    add(c,r);gap(c,6)
+                }
+                val actions=row()
+                actions.addView(button("+ Satz",false) {
+                    item.sets.add(SetDraft(weight=item.sets.lastOrNull()?.weight ?: ""))
+                    refreshRows()
+                },LinearLayout.LayoutParams(0,dp(42),1f))
+                if(item.sets.size>1) {
+                    add(actions,View(this),7,1)
+                    actions.addView(button("− Letzter",false) {
+                        item.sets.removeAt(item.sets.lastIndex)
+                        refreshRows()
+                    },LinearLayout.LayoutParams(0,dp(42),1f))
+                }
+                add(c,actions)
+            }
+            scroll.post {scroll.scrollTo(0,oldScroll)}
+        }
+        refreshRows()
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("Training "+session.plan+" bearbeiten")
+            .setView(scroll).setNegativeButton("Abbrechen",null)
+            .setPositiveButton("Änderungen speichern",null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                try {
+                    store.updateSession(session.id,selectedDate,cardioCheck.isChecked,
+                        if(cardioCheck.isChecked)cardioType.text.toString().trim() else "",
+                        if(cardioCheck.isChecked)cardioMinutes.text.toString().toIntOrNull() ?: 0 else 0,
+                        edits)
+                    dialog.dismiss()
+                    render()
+                    info("Gespeichertes Training aktualisiert.")
+                } catch(e:Exception) {info(e.message ?: "Korrektur fehlgeschlagen.")}
+            }
+        }
+        dialog.show()
+    }
+
     private fun exerciseChart() {
         planSelector(page)
         val all=store.progressExercises(plan,viewingPhaseId)
