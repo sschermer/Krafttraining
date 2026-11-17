@@ -87,7 +87,7 @@ class MainActivity : Activity() {
     private fun edit(value:String="",hint:String="",number:Boolean=false):EditText =
         EditText(this).apply {
             setText(value);this.hint=hint;textSize=15f
-            singleLine=true
+            isSingleLine=true
             inputType=if(number) InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
                 else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setSelectAllOnFocus(true)
@@ -114,7 +114,7 @@ class MainActivity : Activity() {
         add(header,text("TRAININGSAPP",21f,true,Color.WHITE))
         add(header,text(if(draft!=null)"Training $plan läuft" else "Dein Training. Deine Entwicklung.",12f,false,Color.rgb(195,224,212)))
         add(root,header)
-        val scroll=ScrollView(this).apply {fillViewport=true;clipToPadding=false}
+        val scroll=ScrollView(this).apply {isFillViewport=true;clipToPadding=false}
         page=column().apply {setPadding(dp(14),dp(16),dp(14),dp(20))}
         scroll.addView(page)
         root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
@@ -404,7 +404,7 @@ class MainActivity : Activity() {
         for(ex in exercises) add(fixed,cell(ex.name,142,true))
         add(whole,fixed,142)
         val scroll=HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled=true;fillViewport=false
+            isHorizontalScrollBarEnabled=true;isFillViewport=false
         }
         val right=column()
         val dates=row()
