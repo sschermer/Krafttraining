@@ -931,57 +931,105 @@ class MainActivity : Activity() {
             override fun onItemSelected(parent:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long) {updateChart(position)}
         }
     }
+    private fun weightScreen() {
+        title("Körpergewicht","Gewicht mit Datum erfassen und die Entwicklung verfolgen.")
+        weightPage()
+    }
+
     private fun weightPage() {
-        val weights=store.bodyWeights()
+        val all=store.bodyWeights()
         val summary=card(page)
-        add(summary,text("Körpergewicht",17f,true))
-        add(summary,text(weights.lastOrNull()?.let {formatNumber(it.kg)+" kg · "+date(it.timestamp)}
-            ?: "Noch kein Körpergewicht gespeichert.",14f))
-        gap(summary,9);add(summary,button("+ Gewicht mit Datum/Uhrzeit erfassen"){weightDialog()})
-        if(weights.isNotEmpty()) {
-            add(page,TrendChartView(weights.map {Pair(it.timestamp,it.kg)},"kg"),-1,230)
-            gap(page,10)
-            for(w in weights.asReversed().take(50)) {
-                val c=card(page)
-                val r=row()
-                r.addView(text(date(w.timestamp)+"  ·  "+formatNumber(w.kg)+" kg",14f),
-                    LinearLayout.LayoutParams(0,-2,1f))
-                add(r,button("Löschen",false){
-                    AlertDialog.Builder(this).setTitle("Messung löschen?")
-                        .setMessage(date(w.timestamp)+" · "+formatNumber(w.kg)+" kg")
-                        .setNegativeButton("Abbrechen",null)
-                        .setPositiveButton("Löschen"){_,_->store.deleteBodyWeight(w.id);render()}
-                        .show()
-                },100)
-                add(c,r)
-            }
+        add(summary,text("Meine Gewichtsentwicklung",18f,true));gap(summary,6)
+        add(summary,text(all.lastOrNull()?.let {formatNumber(it.kg)+" kg · "+date(it.timestamp)}
+            ?: "Noch keine Messungen gespeichert.",15f))
+        gap(summary,10)
+        add(summary,button("+ Körpergewicht eintragen") {weightDialog()})
+        gap(page,5)
+
+        val ranges=listOf(7 to "7 T",30 to "30 T",90 to "90 T",365 to "1 Jahr",0 to "Alle")
+        val selection=row()
+        for((days,label) in ranges) {
+            selection.addView(button(label,weightRangeDays==days) {
+                weightRangeDays=days
+                render()
+            },LinearLayout.LayoutParams(0,dp(42),1f))
+        }
+        add(page,selection);gap(page,12)
+        val cutoff=if(weightRangeDays==0)Long.MIN_VALUE
+            else System.currentTimeMillis()-weightRangeDays.toLong()*24*60*60*1000
+        val filtered=all.filter {it.timestamp>=cutoff}
+        if(filtered.isEmpty()) {
+            val empty=card(page)
+            add(empty,text("Für diesen Zeitraum liegen noch keine Messungen vor.",14f))
+            return
+        }
+
+        val first=filtered.first()
+        val last=filtered.last()
+        val delta=last.kg-first.kg
+        val metrics=card(page)
+        add(metrics,text(filtered.size.toString()+" Messungen im Zeitraum",14f,true))
+        gap(metrics,4)
+        add(metrics,text("Veränderung: "+(if(delta>0)"+" else "")+
+            formatNumber(delta)+" kg",13f,false,muted))
+        gap(page,3)
+        add(page,TrendChartView(filtered.map {Pair(it.timestamp,it.kg)},"kg"),-1,250)
+        gap(page,10)
+        add(page,text("Messwerte · neueste zuerst",16f,true));gap(page,8)
+        for(w in filtered.asReversed()) {
+            val c=card(page)
+            val r=row()
+            val values=column()
+            add(values,text(formatNumber(w.kg)+" kg",15f,true))
+            add(values,text(date(w.timestamp),12f,false,muted))
+            r.addView(values,LinearLayout.LayoutParams(0,-2,1f))
+            add(r,button("Ändern",false){weightDialog(w)},86)
+            add(r,View(this),6,1)
+            add(r,button("Löschen",false){
+                AlertDialog.Builder(this).setTitle("Messung löschen?")
+                    .setMessage(date(w.timestamp)+" · "+formatNumber(w.kg)+" kg")
+                    .setNegativeButton("Abbrechen",null)
+                    .setPositiveButton("Löschen"){_,_->store.deleteBodyWeight(w.id);render()}
+                    .show()
+            },85)
+            add(c,r)
         }
     }
-    private fun weightDialog() {
+
+    private fun weightDialog(existing:BodyWeight?=null) {
         val box=column().apply {setPadding(dp(22),dp(8),dp(22),0)}
-        add(box,text("Gewicht in kg",13f,true))
-        val input=edit("","z. B. 82,4",true);add(box,input);gap(box,9)
-        val time=text("Jetzt: "+date(System.currentTimeMillis()),13f,false,muted)
-        add(box,time)
-        var ts=System.currentTimeMillis()
+        add(box,text("Körpergewicht in kg",13f,true))
+        val input=edit(existing?.kg?.let {formatNumber(it)} ?: "","z. B. 82,4",true)
+        add(box,input);gap(box,11)
+        var selectedDate=existing?.timestamp ?: System.currentTimeMillis()
+        val dateButton=button("Datum: "+date(selectedDate),false){}
+        dateButton.setOnClickListener {
+            chooseTrainingDate(selectedDate) {time->
+                selectedDate=time
+                dateButton.text="Datum: "+date(time)
+            }
+        }
+        add(box,dateButton)
         gap(box,7)
-        add(box,button("Datum und Uhrzeit ändern",false){
-            val cal=Calendar.getInstance().apply {timeInMillis=ts}
-            DatePickerDialog(this,{_,y,m,d->
-                cal.set(Calendar.YEAR,y);cal.set(Calendar.MONTH,m);cal.set(Calendar.DAY_OF_MONTH,d)
-                TimePickerDialog(this,{_,h,min->
-                    cal.set(Calendar.HOUR_OF_DAY,h);cal.set(Calendar.MINUTE,min)
-                    cal.set(Calendar.SECOND,0);ts=cal.timeInMillis;time.text=date(ts)
-                },cal.get(Calendar.HOUR_OF_DAY),cal.get(Calendar.MINUTE),true).show()
-            },cal.get(Calendar.YEAR),cal.get(Calendar.MONTH),cal.get(Calendar.DAY_OF_MONTH)).show()
-        })
-        val dialog=AlertDialog.Builder(this).setTitle("Körpergewicht eintragen").setView(box)
-            .setNegativeButton("Abbrechen",null).setPositiveButton("Speichern",null).create()
+        add(box,text("Datum und Uhrzeit sind frei wählbar, auch rückwirkend.",12f,false,muted))
+        val dialog=AlertDialog.Builder(this)
+            .setTitle(if(existing==null)"Gewicht eintragen" else "Gewicht korrigieren")
+            .setView(box).setNegativeButton("Abbrechen",null)
+            .setPositiveButton("Speichern",null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val kg=input.text.toString().replace(',','.').toDoubleOrNull()
-                if(kg==null || kg<=0 || kg>500) {info("Bitte gültiges Körpergewicht eintragen.");return@setOnClickListener}
-                store.addBodyWeight(kg,ts);dialog.dismiss();render()
+                val kg=input.text.toString().trim().replace(',','.').toDoubleOrNull()
+                if(kg==null || kg<=0.0 || kg>500.0) {
+                    info("Bitte ein gültiges Körpergewicht eingeben.")
+                    return@setOnClickListener
+                }
+                try {
+                    if(existing==null)store.addBodyWeight(kg,selectedDate)
+                    else store.updateBodyWeight(existing.id,kg,selectedDate)
+                    dialog.dismiss()
+                    render()
+                    info("Körpergewicht gespeichert.")
+                } catch(e:Exception) {info(e.message ?: "Speichern fehlgeschlagen.")}
             }
         }
         dialog.show()
