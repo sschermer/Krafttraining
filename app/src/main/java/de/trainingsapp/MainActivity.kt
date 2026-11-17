@@ -671,6 +671,17 @@ class MainActivity : Activity() {
 
     private fun results() {
         title("Fortschritt","Tabellen, Trainingskurven und Körpergewicht.")
+        val filter=store.phase(viewingPhaseId ?: -1L)
+        add(page,button("Trainingsphase: "+(filter?.name ?: "Alle Phasen")+"  ▾",false) {
+            val options=listOf("Alle Phasen – gesamte Entwicklung")+
+                store.phases().map {it.name+(if(it.active)" · aktiv" else " · abgeschlossen")}
+            AlertDialog.Builder(this).setTitle("Trainingsphase auswählen")
+                .setItems(options.toTypedArray()) {_,index->
+                    viewingPhaseId=if(index==0)null else store.phases()[index-1].id
+                    render()
+                }.show()
+        })
+        gap(page,11)
         val buttons=row()
         listOf("Tabelle","Kurven","Gewicht").forEach {name ->
             buttons.addView(button(name,analysis==name){analysis=name;render()},
@@ -686,8 +697,8 @@ class MainActivity : Activity() {
     private fun progressTable() {
         planSelector(page)
         add(page,text("Älteste Einheiten links, neueste rechts.",12f,false,muted));gap(page,9)
-        val sessions=store.sessions(plan)
-        val exercises=store.progressExercises(plan)
+        val sessions=store.sessions(plan,viewingPhaseId)
+        val exercises=store.progressExercises(plan,viewingPhaseId)
         if(sessions.isEmpty()) {add(page,text("Noch keine gespeicherten Trainingseinheiten.",14f));return}
         val whole=row().apply {gravity=Gravity.TOP}
         val fixed=column()
@@ -700,7 +711,7 @@ class MainActivity : Activity() {
         }
         val right=column()
         val dates=row()
-        for(s in sessions) add(dates,cell(date(s.timestamp,true),116,true))
+        for(s in sessions) add(dates,cell((if(viewingPhaseId==null)"P"+s.phaseId+" · " else "")+date(s.timestamp,true),116,true))
         add(right,dates)
         for(ex in exercises) {
             val values=row()
@@ -717,6 +728,19 @@ class MainActivity : Activity() {
         scroll.post {scroll.fullScroll(View.FOCUS_RIGHT)}
         gap(page,10)
         add(page,text("Beispiel: 30 / 10-10 = 30 kg pro Seite, 10 und 10 Wdh. · 45s-40s = Haltedauer.",12f,false,muted))
+        gap(page,16)
+        add(page,text("Gespeicherte Trainingseinheiten",17f,true))
+        gap(page,8)
+        for(training in sessions.asReversed()) {
+            val box=card(page)
+            val r=row()
+            val left=column()
+            add(left,text("Training "+training.plan+" · "+date(training.timestamp),14f,true))
+            add(left,text(store.phase(training.phaseId)?.name ?: "Phase "+training.phaseId,12f,false,muted))
+            r.addView(left,LinearLayout.LayoutParams(0,-2,1f))
+            add(r,button("Bearbeiten",false){editSessionDialog(training)},105)
+            add(box,r)
+        }
     }
     private fun cell(value:String,width:Int,bold:Boolean):TextView=text(value,if(bold)12f else 13f,bold).apply {
         gravity=Gravity.CENTER_VERTICAL or (if(width==142)Gravity.LEFT else Gravity.CENTER_HORIZONTAL)
@@ -733,11 +757,14 @@ class MainActivity : Activity() {
                 (it.rir?.let {r->" · RIR "+formatNumber(r)} ?: "")
         }
         AlertDialog.Builder(this).setTitle(ex.name+" · "+date(s.timestamp))
-            .setMessage(body.ifBlank{"Keine Sätze"}).setPositiveButton("Schließen",null).show()
+            .setMessage(body.ifBlank{"Keine Sätze"})
+            .setNegativeButton("Schließen",null)
+            .setPositiveButton("Einheit bearbeiten"){_,_->editSessionDialog(s)}
+            .show()
     }
     private fun exerciseChart() {
         planSelector(page)
-        val all=store.progressExercises(plan)
+        val all=store.progressExercises(plan,viewingPhaseId)
         if(all.isEmpty()) {add(page,text("Noch keine Übungen im Plan.",14f));return}
         val picker=Spinner(this).apply {
             adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,all.map {it.name})
@@ -748,7 +775,7 @@ class MainActivity : Activity() {
         fun updateChart(index:Int) {
             holder.removeAllViews()
             val ex=all.getOrNull(index) ?: return
-            val points=store.sessions(plan).mapNotNull {s->
+            val points=store.sessions(plan,viewingPhaseId).mapNotNull {s->
                 val sets=store.sets(s.id).filter {it.exerciseId==ex.id}
                 val numbers=if(ex.kind=="time")sets.mapNotNull {it.seconds?.toDouble()}
                     else sets.mapNotNull {it.weight }
