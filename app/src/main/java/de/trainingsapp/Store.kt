@@ -15,8 +15,12 @@ data class Exercise(
 )
 data class TrainingSession(
     val id: Long, val timestamp: Long, val plan: String,
-    val cardio: Boolean, val cardioType: String, val cardioMinutes: Int
+    val cardio: Boolean, val cardioType: String, val cardioMinutes: Int,
+    val phaseId: Long = 1L
 )
+data class TrainingPhase(val id:Long, val name:String, val startedAt:Long, val endedAt:Long?) {
+    val active:Boolean get() = endedAt==null
+}
 data class TrainingSet(
     val id: Long, val sessionId: Long, val exerciseId: Long, val number: Int,
     val weight: Double?, val reps: Int?, val seconds: Int?, val rir: Double?
@@ -28,7 +32,7 @@ data class SetDraft(
 )
 data class ExerciseDraft(val exercise: Exercise, val sets: MutableList<SetDraft>)
 
-class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 1) {
+class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2) {
     companion object {
         val CATEGORIES = listOf(
             "Beine – kniedominant", "Hüfte & hintere Muskelkette",
@@ -36,7 +40,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 1
             "Rumpf", "Isolationsübungen", "Beweglichkeit & Stabilität",
             "Ausdauer & Kondition"
         )
-        val TABLES = listOf("exercises", "plans", "sessions", "training_sets", "body_weights")
+        val TABLES = listOf("training_phases", "exercises", "plans", "sessions", "training_sets", "body_weights")
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -103,10 +107,22 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 1
                     arrayOf(plan, index, name))
             }
         }
+        installPhases(db)
     }
 
+    private fun installPhases(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS training_phases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            started_at INTEGER NOT NULL, ended_at INTEGER)""")
+        db.execSQL("INSERT OR IGNORE INTO training_phases (id,name,started_at,ended_at) VALUES (1,'Trainingsphase 1',?,NULL)",
+            arrayOf(System.currentTimeMillis()))
+        db.execSQL("ALTER TABLE plans ADD COLUMN phase_id INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE sessions ADD COLUMN phase_id INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_phase_sessions ON sessions(phase_id,timestamp)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_phase_plans ON plans(phase_id,plan,position)")
+    }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Future schema upgrades must preserve all recorded workouts.
+        if(oldVersion < 2) installPhases(db)
     }
 
     private fun <T> query(sql: String, args: Array<String> = emptyArray(), map: (Cursor) -> T): List<T> {
