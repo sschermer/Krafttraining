@@ -142,3 +142,10 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Die Startseite zeigt bei einem leeren Plan eine eindeutige Aufforderung, Übungen selbst auszuwählen, statt einen leeren Trainingsstart anzubieten.
 - **Wichtig bei Updates:** Bereits vorhandene A/B-Pläne werden absichtlich **nicht automatisch gelöscht**, um individuell angepasste Pläne zu schützen.
 - Auf einem schon verwendeten Gerät lassen sich bestehende Pläne bei Bedarf im Bereich `Training` über `A/B-Pläne vollständig leeren` und anschließende Bestätigung zurücksetzen. Gespeicherte Trainingseinheiten und archivierte Phasen bleiben erhalten.
+
+## Version 0.3.3 – Korrigierte Fortschrittstabelle
+
+- Der Fehler entstand, weil der allgemeine Layout-Helfer die festgelegte Zellenhöhe wieder durch `WRAP_CONTENT` ersetzte. Jetzt werden Zellen direkt mit festen Layoutparametern eingesetzt.
+- Übungsnamen und Ergebniszellen besitzen dasselbe Zeilenraster (76 dp), die gesamte Kopfzeile 44 dp.
+- Namen können bis zu drei Zeilen haben; Datumsüberschriften erscheinen ohne Zeilenumbruch als `dd.MM.yy`.
+- Linke Übungsspalte bleibt fixiert, die Ergebnis-Spalten horizontal scrollen. Trainingsdaten und Datenbank bleiben unverändert.

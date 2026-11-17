@@ -187,7 +187,7 @@ class MainActivity : Activity() {
         })
     }
     private fun date(ts:Long,short:Boolean=false):String=SimpleDateFormat(
-        if(short)"dd.MM.\nyy" else "dd.MM.yyyy HH:mm",Locale.GERMANY).format(Date(ts))
+        if(short)"dd.MM.yy" else "dd.MM.yyyy HH:mm",Locale.GERMANY).format(Date(ts))
     private fun info(msg:String) {Toast.makeText(this,msg,Toast.LENGTH_LONG).show()}
 
     private fun render() {
@@ -772,28 +772,46 @@ class MainActivity : Activity() {
         add(page,text("Älteste Einheiten links, neueste rechts.",12f,false,muted));gap(page,9)
         val sessions=store.sessions(plan,viewingPhaseId)
         val exercises=store.progressExercises(plan,viewingPhaseId)
-        if(sessions.isEmpty()) {add(page,text("Noch keine gespeicherten Trainingseinheiten.",14f));return}
+        if(sessions.isEmpty()) {
+            add(page,text("Noch keine gespeicherten Trainingseinheiten.",14f))
+            return
+        }
+
+        // Both independent columns must use exactly matching heights.
+        // The generic add() helper overrides existing layoutParams,
+        // so table cells are added directly with their fixed sizes.
+        val exerciseWidth=158
+        val resultWidth=128
+        val headerHeight=44
+        val exerciseHeight=76
+
         val whole=row().apply {gravity=Gravity.TOP}
         val fixed=column()
-        val fixedHead=cell("Übung",142,true)
-        add(fixed,fixedHead)
-        for(ex in exercises) add(fixed,cell(ex.name,142,true))
-        add(whole,fixed,142)
+        fixed.addView(cell("Übung",exerciseWidth,true,headerHeight,1))
+        for(ex in exercises) {
+            fixed.addView(cell(ex.name,exerciseWidth,true,exerciseHeight,3))
+        }
+        add(whole,fixed,exerciseWidth)
+
         val scroll=HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled=true;isFillViewport=false
+            isHorizontalScrollBarEnabled=true
+            isFillViewport=false
         }
         val right=column()
         val dates=row()
-        for(s in sessions) add(dates,cell((if(viewingPhaseId==null)"P"+s.phaseId+" · " else "")+date(s.timestamp,true),116,true))
-        add(right,dates)
+        for(s in sessions) {
+            val prefix=if(viewingPhaseId==null) "P"+s.phaseId+" · " else ""
+            dates.addView(cell(prefix+date(s.timestamp,true),resultWidth,true,headerHeight,1))
+        }
+        right.addView(dates)
         for(ex in exercises) {
             val values=row()
             for(s in sessions) {
-                val v=cell(store.formatCell(s.id,ex),116,false)
-                v.setOnClickListener {sessionDetails(s,ex)}
-                add(values,v)
+                val result=cell(store.formatCell(s.id,ex),resultWidth,false,exerciseHeight,2)
+                result.setOnClickListener {sessionDetails(s,ex)}
+                values.addView(result)
             }
-            add(right,values)
+            right.addView(values)
         }
         scroll.addView(right)
         whole.addView(scroll,LinearLayout.LayoutParams(0,-2,1f))
@@ -815,13 +833,17 @@ class MainActivity : Activity() {
             add(box,r)
         }
     }
-    private fun cell(value:String,width:Int,bold:Boolean):TextView=text(value,if(bold)12f else 13f,bold).apply {
-        gravity=Gravity.CENTER_VERTICAL or (if(width==142)Gravity.LEFT else Gravity.CENTER_HORIZONTAL)
-        setPadding(dp(6),dp(2),dp(6),dp(2))
-        background=shape(Color.WHITE,0,Color.rgb(224,232,227))
-        layoutParams=LinearLayout.LayoutParams(dp(width),dp(55))
-        maxLines=2
-    }
+    private fun cell(value:String,width:Int,bold:Boolean,height:Int,lines:Int):TextView =
+        text(value,if(bold)12f else 13f,bold).apply {
+            gravity=Gravity.CENTER_VERTICAL or (if(lines==3 || value=="Übung")
+                Gravity.LEFT else Gravity.CENTER_HORIZONTAL)
+            setPadding(dp(7),dp(4),dp(7),dp(4))
+            background=shape(Color.WHITE,0,Color.rgb(224,232,227))
+            layoutParams=LinearLayout.LayoutParams(dp(width),dp(height))
+            maxLines=lines
+            ellipsize=android.text.TextUtils.TruncateAt.END
+            if(lines==1) setSingleLine(true)
+        }
     private fun sessionDetails(s:TrainingSession,ex:Exercise) {
         val entries=store.sets(s.id).filter {it.exerciseId==ex.id}
         val body=entries.joinToString("\n") {
