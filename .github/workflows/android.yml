@@ -21,20 +21,77 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Trainingsapp-0.1-debug-apk
+          name: Trainingsapp-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-      - name: Publish debug APK as test release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+      # Only protected repository secrets may sign a release.
+      # No GitHub secrets are passed to pull-request builds.
+      - name: Prepare permanent signing key
+        id: signing
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" || -z "$ANDROID_SIGNING_PASSWORD" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signing secrets missing; debug APK built, signed release skipped."
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/trainingsapp-release.p12"
+          chmod 600 "$RUNNER_TEMP/trainingsapp-release.p12"
+          keytool -list -keystore "$RUNNER_TEMP/trainingsapp-release.p12" -storetype PKCS12 \
+            -storepass "$ANDROID_SIGNING_PASSWORD" -alias trainingsapp > /dev/null
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/trainingsapp-release.p12" >> "$GITHUB_ENV"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build permanently signed release APK
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+          BUILD_VERSION_CODE: ${{ github.run_number }}
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Verify signed APK and certificate
+        if: steps.signing.outputs.configured == 'true'
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+          EXPECTED="C1145F10EDACA6164AD111DB5D832BE885238FACF71B76408D7A95874EC43987"
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::Unexpected signing certificate. Refusing to publish."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: steps.signing.outputs.configured == 'true'
+        with:
+          name: Trainingsapp-signed-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Publish signed APK under Releases
+        if: steps.signing.outputs.configured == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk Trainingsapp-v0.1.0-debug.apk
-          if ! gh release view v0.1.0-test >/dev/null 2>&1; then
-            gh release create v0.1.0-test --title "Trainingsapp 0.1.0 - Testversion" --prerelease --notes "Erste Android-Testversion. Debug-APK (noch keine dauerhaft signierte Releaseversion)."
-          fi
-          gh release upload v0.1.0-test Trainingsapp-v0.1.0-debug.apk --clobber
+          TAG="v0.1.1-build${GITHUB_RUN_NUMBER}"
+          NAME="Trainingsapp-v0.1.1-build${GITHUB_RUN_NUMBER}-signed.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$NAME"
+          gh release create "$TAG" "$NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Trainingsapp 0.1.1 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
+            --prerelease \
+            --notes "Dauerhaft signierte Testversion. Kuenftige APKs mit demselben Schluessel und hoeherem versionCode aktualisieren die App. Einmalige Neuinstallation nach der alten Debug-APK erforderlich."
