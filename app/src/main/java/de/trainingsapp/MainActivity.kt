@@ -339,11 +339,20 @@ class MainActivity : Activity() {
             planSelector(page)
             val c=card(page)
             add(c,text("Nächstes Training: "+current.name+" / "+plan,18f,true));gap(c,7)
-            store.planEntries(plan,current.id).forEach { (exercise,_) ->
-                add(c,text("• "+exercise.name,14f))
+            val exercises=store.planEntries(plan,current.id)
+            if(exercises.isEmpty()) {
+                add(c,text("Noch keine Übungen ausgewählt.",14f,false,muted))
+                gap(c,12)
+                add(c,button("Übungen für Training $plan auswählen") {
+                    tab="Training";render()
+                })
+            } else {
+                exercises.forEach { (exercise,_) ->
+                    add(c,text("• "+exercise.name,14f))
+                }
+                gap(c,12)
+                add(c,button("Training $plan beginnen") {askCardio()})
             }
-            gap(c,12)
-            add(c,button("Training $plan beginnen") {askCardio()})
         }
         val recent=store.sessions().lastOrNull()
         val summary=card(page)
@@ -612,6 +621,26 @@ class MainActivity : Activity() {
         add(page,button("Zur Startseite",false){tab="Start";render()})
         gap(page,8)
         add(page,button("Trainingsphase abschließen",false){finishPhaseDialog(phase)})
+        if(store.planEntries("A",phase.id).isNotEmpty() ||
+            store.planEntries("B",phase.id).isNotEmpty()) {
+            gap(page,8)
+            add(page,button("A/B-Pläne vollständig leeren",false) {
+                if(draft!=null) {info("Bitte laufendes Training zuerst abschließen.");return@button}
+                AlertDialog.Builder(this).setTitle("Trainingspläne wirklich leeren?")
+                    .setMessage("Alle ausgewählten Übungen dieser Trainingsphase aus A und B entfernen? " +
+                        "Bereits absolvierte Trainingseinheiten und frühere Phasen bleiben erhalten.")
+                    .setNegativeButton("Abbrechen",null)
+                    .setPositiveButton("Pläne leeren"){_,_->
+                        try {
+                            store.clearCurrentPlans(phase.id)
+                            expandedCategory=null
+                            catalogExpandedCategory=null
+                            render()
+                            info("A und B sind jetzt leer.")
+                        } catch(e:Exception){info(e.message ?: "Leeren fehlgeschlagen.")}
+                    }.show()
+            })
+        }
     }
 
     private fun catalog() {

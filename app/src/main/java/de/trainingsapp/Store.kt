@@ -97,16 +97,9 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
             }
             db.insertOrThrow("exercises", null, v)
         }
-        // Editable starting examples; users can replace them freely.
-        for ((plan, names) in mapOf(
-            "A" to listOf("Wandsitz","Bankdrücken mit Kurzhanteln","Langhantelrudern","Unterarmstütz (Plank)"),
-            "B" to listOf("Rumänisches Kreuzheben","Klimmzüge – enger Griff","Schulterdrücken mit Kurzhanteln","Russian Twists")
-        )) {
-            names.forEachIndexed { index, name ->
-                db.execSQL("INSERT INTO plans(plan,exercise_id,position,target_sets) SELECT ?,id,?,2 FROM exercises WHERE name=?",
-                    arrayOf(plan, index, name))
-            }
-        }
+        // Fresh installations start with EMPTY A/B training plans.
+        // Catalog exercises are still available to choose from.
+        // Existing installations retain their saved plans through upgrades.
         installPhases(db)
     }
 
@@ -208,6 +201,12 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         require(activePhase()?.id==phaseId) { "Abgeschlossene Trainingsphasen sind schreibgeschützt." }
         writableDatabase.delete("plans","plan=? AND exercise_id=? AND phase_id=?",
             arrayOf(plan,exerciseId.toString(),phaseId.toString()))
+    }
+    // Optional reset for existing installations: do not touch recorded
+    // sessions, individual sets or archived phase plans.
+    fun clearCurrentPlans(phaseId:Long) {
+        require(activePhase()?.id==phaseId) { "Nur aktive Trainingspläne können geleert werden." }
+        writableDatabase.delete("plans","phase_id=?",arrayOf(phaseId.toString()))
     }
 
     fun sessions(plan:String?=null,phaseId:Long?=null):List<TrainingSession> {

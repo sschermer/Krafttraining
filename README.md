@@ -135,3 +135,10 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Zeitreihendiagramm für das Körpergewicht mit Zeitfiltern 7/30/90 Tage, 1 Jahr und gesamter Zeitraum; Anzeige des Gewichtsverlaufs und der Änderung im Zeitraum.
 - Alle Gewichtsmessungen bleiben lokal gespeichert und gehen weiterhin in JSON-Backups sowie XLSX-Exporte ein.
 
+
+## Version 0.3.2 – Leere A/B-Pläne beim ersten Start
+
+- Bei einer **Neuinstallation** werden keine Übungen mehr automatisch in Training A oder B eingetragen. Der Übungskatalog selbst bleibt mit allen Übungen befüllt.
+- Die Startseite zeigt bei einem leeren Plan eine eindeutige Aufforderung, Übungen selbst auszuwählen, statt einen leeren Trainingsstart anzubieten.
+- **Wichtig bei Updates:** Bereits vorhandene A/B-Pläne werden absichtlich **nicht automatisch gelöscht**, um individuell angepasste Pläne zu schützen.
+- Auf einem schon verwendeten Gerät lassen sich bestehende Pläne bei Bedarf im Bereich `Training` über `A/B-Pläne vollständig leeren` und anschließende Bestätigung zurücksetzen. Gespeicherte Trainingseinheiten und archivierte Phasen bleiben erhalten.
