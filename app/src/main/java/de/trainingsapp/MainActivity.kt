@@ -238,7 +238,7 @@ class MainActivity : Activity() {
         val r=row()
         for(name in listOf("A","B")) {
             val b=button("Training $name",plan==name) {
-                plan=name;expandedCategory=null;render()
+                plan=name;expandedCategory=null;catalogExpandedCategory=null;render()
             }
             r.addView(b,LinearLayout.LayoutParams(0,dp(45),1f))
             if(name=="A")add(r,View(this),7,1)
@@ -616,12 +616,14 @@ class MainActivity : Activity() {
 
     private fun catalog() {
         title("Übungskatalog","Eine Kategorie antippen: Übungen werden aufgeklappt.")
+        planSelector(page)
         add(page,button("+ Eigene Übung"){exerciseDialog(null)})
         gap(page,13)
-        add(page,text("Im Bereich „Training“ wählst du die Übungen für A oder B aus.",12f,false,muted))
+        add(page,text("Gewünschte Übungen für Training "+plan+" per Häkchen auswählen.",12f,false,muted))
         gap(page,12)
         val all=store.exercises()
-        val chosen=store.activePhase()?.let {store.planEntries(plan,it.id).map {pair->pair.first.id}.toSet()} ?: emptySet()
+        val active=store.activePhase()
+        val chosen=active?.let {store.planEntries(plan,it.id).map {pair->pair.first.id}.toSet()} ?: emptySet()
         for(category in (Store.CATEGORIES+all.map {it.category}).distinct()) {
             val exercises=all.filter {it.category==category}
             if(exercises.isEmpty())continue
@@ -645,7 +647,21 @@ class MainActivity : Activity() {
                 gap(box,9)
                 for(ex in exercises) {
                     val inner=column()
-                    add(inner,text((if(ex.id in chosen)"✓ " else "")+ex.name,14f,true))
+                    if(active!=null) {
+                        val check=CheckBox(this).apply {
+                            text=ex.name
+                            textSize=14f
+                            isChecked=ex.id in chosen
+                            setOnCheckedChangeListener {_,checked->
+                                try {
+                                    if(checked)store.addToPlan(plan,ex.id,active.id)
+                                    else store.removeFromPlan(plan,ex.id,active.id)
+                                    render()
+                                } catch(e:Exception) {info(e.message ?: "Auswahl nicht möglich.")}
+                            }
+                        }
+                        add(inner,check)
+                    } else add(inner,text(ex.name,14f,true))
                     add(inner,text((if(ex.kind=="time")"Sekunden" else "Wiederholungen")+
                         " · "+ex.equipment,11f,false,muted))
                     gap(inner,5)
