@@ -95,3 +95,17 @@ nicht mehr möglich.
 - Signierter Build: nur auf `main` nach Einrichtung der Secrets
 - `apksigner verify` und Prüfung des Zertifikats vor der Veröffentlichung
 - Neue signierte Testversionen unter GitHub Releases, nicht nur Actions-Artefakten
+
+## Version 0.2.0 – Datenintegrität und Bedienung
+
+- Vorherige Gewichte/Wiederholungen bleiben sichtbare **Vorschläge**, zählen aber nie automatisch als absolviert.
+- Jeden tatsächlich absolvierten Satz über die **✓-Checkbox** bestätigen; nur diese Sätze werden gespeichert.
+- Ein zusätzlich angelegter Satz ist grundsätzlich unbestätigt.
+- Die Bestätigung, Eingabewerte und die gewählte Trainingsart A/B werden laufend als lokaler Entwurf gesichert.
+- Nach dem Beenden und erneuten Öffnen der App kann ein unterbrochenes Training fortgesetzt werden.
+- Unvollständige Sätze werden nicht stillschweigend in die Historie übernommen.
+- Der Bildschirm behält nach „+ Satz“/„− Letzter Satz“ seine Scrollposition.
+
+### Update-Hinweise
+
+**Erste signierte Installation:** Die alte Debug-APK hat eine andere Signatur. Vor deren Deinstallation eine JSON-Datensicherung erstellen, wenn Trainingsdaten vorhanden sind. Anschließend die erste signierte APK installieren und die Sicherung importieren. Danach können Versionen mit demselben Release-Schlüssel und höherer Versionsnummer ohne Neuinstallation aktualisiert werden. Die Signierung muss im CI erst mit beiden GitHub-Secrets eingerichtet sein.

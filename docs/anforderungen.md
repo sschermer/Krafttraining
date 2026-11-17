@@ -17,3 +17,11 @@ Excel XLSX; CSV (Satzdaten); JSON (vollständiges Backup samt Import). Keine Dat
 
 ## Offene Erweiterungen
 Trainingszeiträume als explizite Plan-Snapshots; differenzierte Auswertungen und Wiederherstellungs-Validierung.
+
+## Verbindliche Schutzregeln ab Version 0.2
+
+- Kein Übernehmen vorausgefüllter Werte in die Historie ohne explizites Bestätigen des betreffenden Satzes.
+- Jeder Satz besitzt im laufenden Training einen Erledigt-Status. Nicht bestätigte Sätze werden beim Abschluss ignoriert.
+- Ein begonnenes Training und Änderungen an dessen Sätzen müssen einen Neustart der App überleben.
+- Eine während des Trainings geänderte Auswahl auf der Startseite darf nicht den A/B-Typ des aktiven Trainings verändern.
+- Datenbankänderungen dürfen ältere Trainingseinheiten nicht löschen.
