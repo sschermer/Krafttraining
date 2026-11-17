@@ -43,6 +43,8 @@ class MainActivity : Activity() {
     private var activePhaseId:Long=1L
     private var workoutTimestamp:Long=System.currentTimeMillis()
     private var expandedCategory:String?=null
+    private var catalogExpandedCategory:String?=null
+    private var weightRangeDays:Int=90
     private var activeScroll: ScrollView?=null
     private var renderedTab=""
 
@@ -207,15 +209,16 @@ class MainActivity : Activity() {
         when(tab) {
             "Start"->home()
             "Training"->if(draft==null)plans() else workout()
-            "Katalog"->catalog()
+            "Übungen"->catalog()
             "Verlauf"->results()
+            "Gewicht"->weightScreen()
             else->dataPage()
         }
         val nav=row().apply {
             setPadding(dp(3),dp(5),dp(3),dp(5));setBackgroundColor(Color.WHITE)
         }
-        val tabs=listOf("Start","Training","Katalog","Verlauf","Daten")
-        val icons=listOf("⌂","A/B","≡","↗","⇩")
+        val tabs=listOf("Start","Training","Übungen","Verlauf","Gewicht","Daten")
+        val icons=listOf("⌂","A/B","≡","↗","kg","⇩")
         tabs.forEachIndexed {i,name ->
             val b=column().apply {gravity=Gravity.CENTER}
             add(b,text(icons[i],18f,true,if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
@@ -249,10 +252,13 @@ class MainActivity : Activity() {
         if(active!=null) {
             add(c,text(active.name,16f,true));gap(c,3)
             add(c,text("Aktuelle Phase · seit "+date(active.startedAt),12f,false,muted));gap(c,10)
+            add(c,button("Neue Trainingsphase",false){createPhaseDialog()})
+            gap(c,7)
             add(c,button("Diese Trainingsphase abschließen",false){finishPhaseDialog(active)})
         } else {
             add(c,text("Derzeit keine aktive Trainingsphase.",14f));gap(c,5)
-            add(c,text("Erstelle eine neue Phase. Alte Pläne und Ergebnisse bleiben erhalten.",12f,false,muted))
+            add(c,text("Alte Pläne und Ergebnisse bleiben erhalten.",12f,false,muted));gap(c,9)
+            add(c,button("Neue Trainingsphase anlegen"){createPhaseDialog()})
         }
     }
 
@@ -303,7 +309,7 @@ class MainActivity : Activity() {
         if(current!=null) {
             add(box,text("Die aktuell laufende Phase wird beim Erstellen automatisch abgeschlossen. Ihre Ergebnisse bleiben unverändert erhalten.",12f,false,muted))
         }
-        val dialog=AlertDialog.Builder(this).setTitle("Training erstellen")
+        val dialog=AlertDialog.Builder(this).setTitle("Neue Trainingsphase")
             .setView(box).setNegativeButton("Abbrechen",null)
             .setPositiveButton("Erstellen",null).create()
         dialog.setOnShowListener {
@@ -351,14 +357,14 @@ class MainActivity : Activity() {
         add(w,text(weights.lastOrNull()?.let {formatNumber(it.kg)+" kg · "+date(it.timestamp)}
             ?: "Noch keine Messung",15f))
         gap(w,9)
-        add(w,button("+ Gewicht eintragen",false){weightDialog()})
+        add(w,button("Gewicht erfassen / Verlauf",false){tab="Gewicht";render()})
         if(draft!=null) {
             val running=card(page)
             add(running,text("Training $activePlan noch nicht abgeschlossen",15f,true))
             add(running,button("Weitertrainieren"){tab="Training";render()})
         }
         gap(page,9)
-        add(page,button("+ Training erstellen") {createPhaseDialog()})
+        add(page,button("Trainingsplan bearbeiten",false){tab="Training";render()})
         gap(page,6)
         add(page,button("Frühere Trainingsphasen ansehen",false) {
             tab="Verlauf";analysis="Tabelle";render()
@@ -556,7 +562,7 @@ class MainActivity : Activity() {
         if(phase==null) {
             add(page,text("Erstelle eine neue Trainingsphase, um Übungen für A und B festzulegen.",14f))
             gap(page,12)
-            add(page,button("+ Training erstellen"){createPhaseDialog()})
+            add(page,button("Neue Trainingsphase anlegen"){createPhaseDialog()})
             return
         }
         planSelector(page)
@@ -603,7 +609,7 @@ class MainActivity : Activity() {
         gap(stats,10)
         add(stats,button("Training $plan beginnen"){askCardio()})
         gap(page,7)
-        add(page,button("+ Training erstellen",false){createPhaseDialog()})
+        add(page,button("Zur Startseite",false){tab="Start";render()})
         gap(page,8)
         add(page,button("Trainingsphase abschließen",false){finishPhaseDialog(phase)})
     }
@@ -683,15 +689,14 @@ class MainActivity : Activity() {
         })
         gap(page,11)
         val buttons=row()
-        listOf("Tabelle","Kurven","Gewicht").forEach {name ->
+        listOf("Tabelle","Kurven").forEach {name ->
             buttons.addView(button(name,analysis==name){analysis=name;render()},
                 LinearLayout.LayoutParams(0,dp(42),1f))
         }
         add(page,buttons);gap(page,14)
         when(analysis) {
             "Tabelle"->progressTable()
-            "Kurven"->exerciseChart()
-            else->weightPage()
+            else->exerciseChart()
         }
     }
     private fun progressTable() {
