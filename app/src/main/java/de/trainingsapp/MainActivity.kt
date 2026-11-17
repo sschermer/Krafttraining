@@ -513,29 +513,61 @@ class MainActivity : Activity() {
     }
 
     private fun plans() {
-        title("Trainingspläne","A/B-Einheiten unabhängig zusammenstellen.")
-        planSelector(page)
-        for((ex,_) in store.planEntries(plan)) {
-            val c=card(page)
-            val r=row()
-            r.addView(text(ex.name,15f,true),LinearLayout.LayoutParams(0,-2,1f))
-            add(r,button("Entfernen",false){
-                store.removeFromPlan(plan,ex.id);render()
-            },105)
-            add(c,r)
+        val phase=store.activePhase()
+        title("Trainingsplan zusammenstellen",phase?.name ?: "Keine aktive Trainingsphase")
+        if(phase==null) {
+            add(page,text("Erstelle eine neue Trainingsphase, um Übungen für A und B festzulegen.",14f))
+            gap(page,12)
+            add(page,button("+ Training erstellen"){createPhaseDialog()})
+            return
         }
-        add(page,button("+ Übung zu Training $plan") {
-            val options=store.exercises().filter {candidate ->
-                store.planEntries(plan).none {it.first.id==candidate.id}
-            }
-            if(options.isEmpty()) {info("Alle Übungen sind bereits zugeordnet.");return@button}
-            AlertDialog.Builder(this).setTitle("Übung hinzufügen")
-                .setItems(options.map {it.name}.toTypedArray()) {_,which ->
-                    store.addToPlan(plan,options[which].id);render()
-                }.show()
-        })
+        planSelector(page)
+        val selected=store.planEntries(plan,phase.id).map {it.first.id}.toSet()
+        val all=store.exercises()
+        add(page,text("Übungskategorien",17f,true));gap(page,3)
+        add(page,text("Eine Kategorie antippen, um Übungen auszuwählen. Die Zahl in Klammern zeigt bereits ausgewählte Übungen.",12f,false,muted))
         gap(page,12)
-        add(page,button("Training $plan beginnen",false){askCardio()})
+        val categories=(Store.CATEGORIES+all.map{it.category}).distinct()
+        for(category in categories) {
+            val exercises=all.filter {it.category==category}
+            if(exercises.isEmpty())continue
+            val chosen=exercises.count {it.id in selected}
+            val opened=expandedCategory==category
+            val box=card(page)
+            val headline=category+(if(chosen>0)" ($chosen)" else "")+(if(opened)"  ▴" else "  ▾")
+            add(box,button(headline,false) {
+                expandedCategory=if(opened)null else category
+                render()
+            })
+            if(opened) {
+                gap(box,10)
+                for(exercise in exercises) {
+                    val check=CheckBox(this).apply {
+                        text=exercise.name
+                        textSize=14f
+                        isChecked=exercise.id in selected
+                        setOnCheckedChangeListener {_,checked->
+                            try {
+                                if(checked) store.addToPlan(plan,exercise.id,phase.id)
+                                else store.removeFromPlan(plan,exercise.id,phase.id)
+                                render()
+                            } catch(e:Exception) {info(e.message ?: "Auswahl fehlgeschlagen.")}
+                        }
+                    }
+                    add(box,check)
+                }
+            }
+        }
+        val stats=card(page)
+        add(stats,text("Training $plan: ${selected.size} Übungen gewählt",15f,true))
+        gap(stats,6)
+        add(stats,text("Auch mehrere Übungen aus derselben Kategorie sind möglich.",12f,false,muted))
+        gap(stats,10)
+        add(stats,button("Training $plan beginnen"){askCardio()})
+        gap(page,7)
+        add(page,button("+ Training erstellen",false){createPhaseDialog()})
+        gap(page,8)
+        add(page,button("Trainingsphase abschließen",false){finishPhaseDialog(phase)})
     }
 
     private fun catalog() {
