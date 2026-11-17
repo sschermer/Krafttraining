@@ -1,0 +1,19 @@
+# Anforderungen – Trainingsapp
+
+## Datenmodell
+Übung (mit Kategorie, Geräten, Art und Kennzeichen Gewicht pro Seite), Plan A/B, Trainingseinheit, Satz und Körpergewicht. Historische Trainingseinheiten werden nicht rückwirkend verändert. Jeder Satz ist ein eigener Datensatz.
+
+## Bedienung
+A/B manuell auswählbar. Vor dem Training die Frage: Kondition vorher? Bei Ja optional Art und Dauer. Voreinstellung zwei Sätze; über ein kleines + pro Übung beliebig viele zusätzliche Sätze. Letzte Gewichte und Wiederholungen werden vorgeschlagen; RIR bleibt leer, bis es erfasst wird. Kein Training automatisch speichern, sondern explizit abschließen.
+
+## Fortschritt
+Eigene Tabellen je A/B-Plan; Übungsnamen links, Termine chronologisch nach rechts. Aktuellster Wert rechts, horizontal scrollbar. Bei gleichem Gewicht: `30 / 10-10`; beim isometrischen Wandsitz: `45s-40s`. Unterschiedliche Satzgewichte werden eindeutig einzeln dargestellt. Zeitreihen zur Trainingsentwicklung.
+
+## Körpergewicht
+Beliebig viele Messungen, jeweils mit Datum und Uhrzeit. Automatische Uhrzeit mit manueller Korrekturmöglichkeit. Zeitreihen-Kurve.
+
+## Export
+Excel XLSX; CSV (Satzdaten); JSON (vollständiges Backup samt Import). Keine Daten in Quellcode oder öffentliche Repositories übernehmen.
+
+## Offene Erweiterungen
+Trainingszeiträume als explizite Plan-Snapshots; differenzierte Auswertungen und Wiederherstellungs-Validierung.
