@@ -718,8 +718,9 @@ class MainActivity : Activity() {
                         tab="Verlauf";analysis="Tabelle";render()
                         AlertDialog.Builder(this)
                             .setTitle("Training gespeichert")
-                            .setMessage("Möchtest du dieses Training als JSON-Datei für eine Auswertung mit ChatGPT herunterladen?")
+                            .setMessage("Wie möchtest du die vollständigen Daten dieses Trainings für ChatGPT bereitstellen?")
                             .setNegativeButton("Später",null)
+                            .setNeutralButton("Text kopieren"){_,_->copyWorkoutText(savedId)}
                             .setPositiveButton("JSON herunterladen"){_,_->saveWorkoutJson(savedId)}
                             .show()
                     } catch(e:Exception) {
@@ -1026,6 +1027,8 @@ class MainActivity : Activity() {
             }
             gap(box,7)
             add(box,button("Training als JSON herunterladen",false){saveWorkoutJson(training.id)})
+            gap(box,5)
+            add(box,button("Training als Text kopieren",false){copyWorkoutText(training.id)})
         }
     }
     private fun cell(value:String,width:Int,bold:Boolean,height:Int,lines:Int):TextView =
@@ -1324,6 +1327,10 @@ class MainActivity : Activity() {
         gap(backup,10)
         add(backup,button("Sicherung exportieren (.json)"){saveFile("json","application/json","Trainingsapp-Backup.json")})
         gap(backup,8)
+        add(backup,button("Alle Trainingsdaten als Text kopieren",false){copyCompleteTrainingText()})
+        gap(backup,5)
+        add(backup,text("Der kopierte Text enthält alle Trainingsphasen, A/B-Pläne, Einheiten, Sätze, RIR, Notizen, Übungswechsel und Körpergewichte. Er ist zur ChatGPT-Auswertung gedacht, nicht zum Wiederherstellen der App.",12f,false,muted))
+        gap(backup,8)
         add(backup,button("Sicherung wiederherstellen",false){
             AlertDialog.Builder(this).setTitle("Sicherung importieren?")
                 .setMessage("Alle vorhandenen Daten werden durch die Sicherung ersetzt. Bitte exportiere vorher eine Sicherung.")
@@ -1339,6 +1346,33 @@ class MainActivity : Activity() {
         add(help,text("Training: zwei Sätze sind voreingestellt. Über „+ Satz“ fügst du weitere hinzu. Vorwerte sind nur Vorschläge; erledigte Sätze mit ✓ bestätigen. RIR ist optional. Angefangene Trainings bleiben auch nach Schließen der App erhalten.",13f))
         gap(help,5)
         add(help,text("Fortschrittstabelle: Das neueste Training steht immer rechts. Jede Zelle zeigt Gewicht / Wiederholungen oder Sekunden mit „s“.",13f))
+    }
+
+    private fun copyToClipboard(label:String,content:String) {
+        val manager=getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        manager.setPrimaryClip(android.content.ClipData.newPlainText(label,content))
+        info("Trainingsdaten als Text in die Zwischenablage kopiert.")
+    }
+
+    private fun copyWorkoutText(sessionId:Long) {
+        try {
+            copyToClipboard("Trainingsapp – Einzeltraining",DataExport.workoutText(store,sessionId))
+        } catch(e:Exception) {
+            AlertDialog.Builder(this).setTitle("Kopieren fehlgeschlagen")
+                .setMessage(e.message ?: "Zwischenablage nicht verfügbar.")
+                .setPositiveButton("OK",null).show()
+        }
+    }
+
+    private fun copyCompleteTrainingText() {
+        try {
+            copyToClipboard("Trainingsapp – gesamte Trainingsdaten",DataExport.fullTrainingText(store))
+        } catch(e:Exception) {
+            AlertDialog.Builder(this).setTitle("Kopieren fehlgeschlagen")
+                .setMessage(e.message ?: "Zwischenablage nicht verfügbar.")
+                .setPositiveButton("OK",null).show()
+        }
     }
 
     private fun saveWorkoutJson(sessionId:Long) {
