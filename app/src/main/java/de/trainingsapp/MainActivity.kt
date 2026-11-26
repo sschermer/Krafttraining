@@ -884,6 +884,15 @@ class MainActivity : Activity() {
             text="Gewicht pro Seite erfassen";isChecked=old?.perSide ?: true
         }
         add(box,perSide)
+        val archived=CheckBox(this).apply {
+            text="Übung archivieren (aus der normalen Auswahl ausblenden)"
+            isChecked=old?.archived ?: false
+        }
+        if(old!=null) {
+            gap(box,7)
+            add(box,archived)
+            add(box,text("Archivieren löscht keine bisherigen Trainingsdaten oder gespeicherten Pläne.",12f,false,muted))
+        }
         val dialog=AlertDialog.Builder(this).setTitle(if(old==null)"Neue Übung" else "Übung bearbeiten")
             .setView(box).setNegativeButton("Abbrechen",null)
             .setPositiveButton("Speichern",null).create()
@@ -893,7 +902,7 @@ class MainActivity : Activity() {
                 if(n.isBlank() || catName.isBlank()) {info("Name und Kategorie sind erforderlich.");return@setOnClickListener}
                 store.upsertExercise(Exercise(old?.id ?: 0L,n,catName,
                     if(kind.selectedItemPosition==1)"time" else "reps",
-                    eq.text.toString().trim(),perSide.isChecked,old?.archived ?: false))
+                    eq.text.toString().trim(),perSide.isChecked,archived.isChecked))
                 dialog.dismiss();render()
             }
         }
