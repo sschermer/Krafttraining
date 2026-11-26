@@ -408,7 +408,11 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         },"id=?",arrayOf(id.toString()))
         require(updated==1) {"Diese Gewichtsmessung wurde nicht gefunden."}
     }
-    fun deleteBodyWeight(id:Long) { writableDatabase.delete("body_weights","id=?",arrayOf(id.toString())) }
+    fun deleteBodyWeight(id:Long) {
+        require(id>0L) {"Ungültige Gewichtsmessung."}
+        val deleted=writableDatabase.delete("body_weights","id=?",arrayOf(id.toString()))
+        require(deleted==1) {"Die Gewichtsmessung wurde nicht gefunden."}
+    }
     fun progressExercises(plan:String,phaseId:Long?=null):List<Exercise> {
         val ids=if(phaseId!=null) {
             query("""SELECT DISTINCT exercise_id FROM (
