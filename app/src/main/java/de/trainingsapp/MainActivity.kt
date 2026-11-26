@@ -618,6 +618,10 @@ class MainActivity : Activity() {
             }
             add(c,text(if(item.exercise.kind=="time")"Haltedauer in Sekunden" else
                 (if(item.exercise.perSide)"Gewicht in kg pro Seite" else "Gewicht in kg (optional)")+" · Wiederholungen",12f,false,muted))
+            store.mostRecentNote(item.exercise.id)?.let {previousNote->
+                gap(c,5)
+                add(c,text("Frühere Bemerkung: "+previousNote,12f,false,muted))
+            }
             gap(c,9)
             val headings=row()
             add(headings,text("Satz",11f,true,muted),30)
@@ -1014,6 +1018,12 @@ class MainActivity : Activity() {
             r.addView(left,LinearLayout.LayoutParams(0,-2,1f))
             add(r,button("Bearbeiten",false){editSessionDialog(training)},105)
             add(box,r)
+            for(swap in store.exerciseSwaps(training.id)) {
+                val original=store.exercise(swap.originalExerciseId)?.name ?: "Unbekannt"
+                val replacement=store.exercise(swap.replacementExerciseId)?.name ?: "Unbekannt"
+                add(box,text("Übungswechsel: "+original+" → "+replacement+
+                    (if(swap.reason.isBlank())"" else " · "+swap.reason),12f,false,muted))
+            }
             gap(box,7)
             add(box,button("Training als JSON herunterladen",false){saveWorkoutJson(training.id)})
         }
