@@ -23,16 +23,20 @@ data class TrainingPhase(val id:Long, val name:String, val startedAt:Long, val e
 }
 data class TrainingSet(
     val id: Long, val sessionId: Long, val exerciseId: Long, val number: Int,
-    val weight: Double?, val reps: Int?, val seconds: Int?, val rir: Double?
+    val weight: Double?, val reps: Int?, val seconds: Int?, val rir: Double?,
+    val note:String = ""
 )
+data class ExerciseSwap(val id:Long,val sessionId:Long,val originalExerciseId:Long,
+    val replacementExerciseId:Long,val reason:String,val position:Int)
 data class BodyWeight(val id: Long, val timestamp: Long, val kg: Double)
 data class SetDraft(
     var weight: String = "", var reps: String = "", var seconds: String = "",
-    var rir: String = "", var completed: Boolean = false
+    var rir: String = "", var completed: Boolean = false, var note:String = ""
 )
-data class ExerciseDraft(val exercise: Exercise, val sets: MutableList<SetDraft>)
+data class ExerciseDraft(val exercise:Exercise,val sets:MutableList<SetDraft>,
+    var replacedById:Long?=null,var replacementReason:String="",var replacementForId:Long?=null)
 
-class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2) {
+class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3) {
     companion object {
         val CATEGORIES = listOf(
             "Beine – kniedominant", "Hüfte & hintere Muskelkette",
@@ -40,7 +44,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
             "Rumpf", "Isolationsübungen", "Beweglichkeit & Stabilität",
             "Ausdauer & Kondition"
         )
-        val TABLES = listOf("training_phases", "exercises", "plans", "sessions", "training_sets", "body_weights")
+        val TABLES = listOf("training_phases", "exercises", "plans", "sessions", "training_sets", "exercise_swaps", "body_weights")
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -101,6 +105,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         // Catalog exercises are still available to choose from.
         // Existing installations retain their saved plans through upgrades.
         installPhases(db)
+        installSwapNotes(db)
     }
 
     private fun installPhases(db: SQLiteDatabase) {
@@ -114,8 +119,21 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 2
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_phase_sessions ON sessions(phase_id,timestamp)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_phase_plans ON plans(phase_id,plan,position)")
     }
+    private fun installSwapNotes(db:SQLiteDatabase) {
+        db.execSQL("ALTER TABLE training_sets ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+        db.execSQL("""CREATE TABLE exercise_swaps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL, original_exercise_id INTEGER NOT NULL,
+            replacement_exercise_id INTEGER NOT NULL,
+            reason TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES sessions(id),
+            FOREIGN KEY(original_exercise_id) REFERENCES exercises(id),
+            FOREIGN KEY(replacement_exercise_id) REFERENCES exercises(id))""")
+        db.execSQL("CREATE INDEX idx_exercise_swaps_session ON exercise_swaps(session_id,position)")
+    }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if(oldVersion < 2) installPhases(db)
+        if(oldVersion < 3) installSwapNotes(db)
     }
 
     private fun <T> query(sql: String, args: Array<String> = emptyArray(), map: (Cursor) -> T): List<T> {
