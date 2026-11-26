@@ -475,6 +475,36 @@ class MainActivity : Activity() {
         for(item in list) {
             val c=card(page)
             add(c,text(item.exercise.name,17f,true));gap(c,3)
+            if(item.replacedById!=null) {
+                val other=store.exercise(item.replacedById!!)
+                add(c,text("Ersetzt durch: "+(other?.name ?: "Unbekannte Übung"),13f,true,accent))
+                if(item.replacementReason.isNotBlank()) {
+                    add(c,text("Grund: "+item.replacementReason,12f,false,muted))
+                }
+                for((index,finished) in item.sets.withIndex()) if(finished.completed) {
+                    val result=if(item.exercise.kind=="time")
+                        (finished.seconds+" s") else (finished.weight.ifBlank{"–"}+
+                        " kg / "+finished.reps+" Wdh.")
+                    add(c,text("Erhaltener Satz "+(index+1)+": "+result+
+                        (if(finished.note.isBlank())"" else " · "+finished.note),12f))
+                }
+                val next=list.firstOrNull {it.exercise.id==item.replacedById}
+                if(next!=null && next.replacedById==null && next.sets.none {it.completed}) {
+                    gap(c,8)
+                    add(c,button("Austausch rückgängig",false) {
+                        list.remove(next)
+                        item.replacedById=null
+                        item.replacementReason=""
+                        saveDraft();render()
+                    })
+                }
+                continue
+            }
+            if(item.replacementForId!=null) {
+                val original=store.exercise(item.replacementForId!!)
+                add(c,text("Ersatz für: "+(original?.name ?: "Unbekannte Übung"),12f,false,accent))
+                gap(c,6)
+            }
             add(c,text(if(item.exercise.kind=="time")"Haltedauer in Sekunden" else
                 (if(item.exercise.perSide)"Gewicht in kg pro Seite" else "Gewicht in kg (optional)")+" · Wiederholungen",12f,false,muted))
             gap(c,9)
@@ -526,7 +556,14 @@ class MainActivity : Activity() {
                     }
                 }
                 add(r,complete,43)
-                add(c,r);gap(c,7)
+                add(c,r)
+                val noteButton=button(if(s.note.isBlank())"+ Notiz zu Satz "+(i+1)
+                    else "✎ Notiz zu Satz "+(i+1)+" bearbeiten",false) {
+                    noteDialog(s) {saveDraft();render()}
+                }
+                add(c,noteButton)
+                if(s.note.isNotBlank()) add(c,text(s.note,12f,false,muted))
+                gap(c,7)
             }
             val controls=row()
             controls.addView(button("+ Satz",false) {
@@ -541,6 +578,8 @@ class MainActivity : Activity() {
                 },LinearLayout.LayoutParams(0,dp(44),1f))
             }
             add(c,controls)
+            gap(c,8)
+            add(c,button("Übung ersetzen",false){replaceExerciseDialog(item)})
         }
         add(page,button("Training abschließen und speichern") {
             val confirmed=list.sumOf {item->item.sets.count {it.completed} }
@@ -965,7 +1004,13 @@ class MainActivity : Activity() {
                         setOnCheckedChangeListener {_,checked->set.completed=checked}
                     }
                     add(r,done,46)
-                    add(c,r);gap(c,6)
+                    add(c,r)
+                    add(c,button(if(set.note.isBlank())"+ Bemerkung zu Satz "+(index+1)
+                        else "✎ Bemerkung bearbeiten",false){
+                        noteDialog(set){refreshRows()}
+                    })
+                    if(set.note.isNotBlank())add(c,text(set.note,12f,false,muted))
+                    gap(c,6)
                 }
                 val actions=row()
                 actions.addView(button("+ Satz",false) {
