@@ -48,6 +48,33 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         val TABLES = listOf("training_phases", "exercises", "plans", "sessions", "training_sets", "exercise_swaps", "body_weights")
     }
 
+    override fun onConfigure(db:SQLiteDatabase) {
+        super.onConfigure(db)
+        // Do not make an old, inconsistent database unusable during an update.
+        // Clean databases (including new ones) can safely enforce their declared
+        // constraints. Backup imports always validate every reference separately.
+        val consistent=db.rawQuery("PRAGMA foreign_key_check",null).use { !it.moveToFirst() }
+        if(consistent) db.setForeignKeyConstraintsEnabled(true)
+    }
+
+    override fun onOpen(db:SQLiteDatabase) {
+        super.onOpen(db)
+        // Local restore bookkeeping is deliberately excluded from exported data.
+        // No training-table migration or existing record rewrite is required.
+        if(!db.isReadOnly) db.execSQL("CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    }
+
+    fun dataGeneration():String {
+        val db=readableDatabase
+        if(db.isReadOnly) {
+            val exists=db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='app_metadata'",null)
+                .use {it.moveToFirst()}
+            if(!exists)return "0"
+        }
+        return db.rawQuery("SELECT value FROM app_metadata WHERE key=?",arrayOf("generation"))
+            .use {if(it.moveToFirst())it.getString(0) else "0"}
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE exercises (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -321,7 +348,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
     }
     fun newDraft(plan:String,phaseId:Long=activePhase()?.id ?: 1L):MutableList<ExerciseDraft> = planEntries(plan,phaseId).map { (exercise, count) ->
         val previous=recentSets(exercise.id)
-        val rows=(0 until maxOf(2,count)).map { i ->
+        val rows=(0 until count.coerceIn(2,BackupValidation.MAX_TARGET_SETS)).map { i ->
             val last=previous.getOrNull(i)
             SetDraft(
                 last?.weight?.let { formatNumber(it) } ?: "",
@@ -527,32 +554,21 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         return root.toString(2)
     }
     fun restoreJson(text:String) {
-        val root=JSONObject(text)
-        val version=root.optInt("version")
-        require(root.optString("format")=="TrainingsappBackup" && version in 1..3) {
-            "Keine gültige Trainingsapp-Sicherung"
-        }
-        for(t in TABLES) {
-            if((t=="training_phases" && version==1) ||
-                (t=="exercise_swaps" && version<3)) continue
-            require(root.has(t)) {"Tabelle fehlt: $t"}
-        }
+        // Parse, bound and validate the complete backup before any DELETE runs.
+        val root=BackupValidation.validateAndNormalize(text)
+        BackupValidation.checkInterrupted()
         val db=writableDatabase
         db.beginTransaction()
         try {
-            for(t in TABLES.reversed()) db.delete(t,null,null)
+            for(t in TABLES.reversed()) {
+                BackupValidation.checkInterrupted()
+                db.delete(t,null,null)
+            }
             for(t in TABLES) {
-                if(version<3 && t=="exercise_swaps") continue
-                if(version==1 && t=="training_phases") {
-                    db.insertOrThrow("training_phases",null,ContentValues().apply {
-                        put("id",1);put("name","Trainingsphase 1")
-                        put("started_at",System.currentTimeMillis())
-                    })
-                    continue
-                }
                 val list=root.getJSONArray(t)
                 val columns=columns(t)
                 for(i in 0 until list.length()) {
+                    BackupValidation.checkInterrupted()
                     val obj=list.getJSONObject(i)
                     val v=ContentValues()
                     for(col in columns) if(obj.has(col) && !obj.isNull(col)) {
@@ -567,6 +583,16 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
                     db.insertOrThrow(t,null,v)
                 }
             }
+            // Also check when legacy inconsistencies prevented enabling FK
+            // enforcement on open. Any failure still rolls back all replaced rows.
+            db.rawQuery("PRAGMA foreign_key_check",null).use {
+                check(!it.moveToFirst()) {"Die Sicherung enthält ungültige Datenverknüpfungen."}
+            }
+            // A surviving SharedPreferences draft from before a process death
+            // cannot attach itself to the newly restored IDs after this commit.
+            db.execSQL("INSERT OR REPLACE INTO app_metadata(key,value) VALUES(?,?)",
+                arrayOf("generation",java.util.UUID.randomUUID().toString()))
+            BackupValidation.checkInterrupted()
             db.setTransactionSuccessful()
         } finally {db.endTransaction()}
     }

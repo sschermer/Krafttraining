@@ -209,10 +209,7 @@ object DataExport {
         }
     }
 
-    private fun csvCell(value:Any?):String {
-        val s=value?.toString() ?: ""
-        return "\"" + s.replace("\"","\"\"") + "\""
-    }
+    private fun csvCell(value:Any?):String = CsvEncoding.cell(value)
     fun csv(store:Store):ByteArray {
         val header=listOf("Datum","Trainingsphase","Training","Kondition vorher","Art Kondition","Minuten Kondition",
             "Übung","Satz","Gewicht (kg)","Gewicht pro Seite","Wiederholungen","Sekunden","RIR","Bemerkung")
