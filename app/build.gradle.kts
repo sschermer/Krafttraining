@@ -17,7 +17,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = System.getenv("BUILD_VERSION_CODE")?.toIntOrNull() ?: 2
-        versionName = "0.5.4"
+        versionName = "0.5.5"
     }
     if (hasReleaseSigning) {
         signingConfigs {

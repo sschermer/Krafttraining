@@ -211,3 +211,11 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Das freigegebene Hantelmotiv ohne Pfeil ist als zentrierte adaptive Android-Vordergrundgrafik hinterlegt (WebP mit Transparenz).
 - Dunkelgrüner Hintergrundverlauf, der zum Farbschema der App passt. Adaptive und runde Launcher-Symbole sowie eine monochrome Variante für Android-Themed-Icons sind vorhanden.
 - Die Icon-Einträge sind im AndroidManifest gesetzt. Trainingsdatenbank, Updatefunktion und sonstige App-Funktionen bleiben unverändert.
+
+## Version 0.5.5 – Körpergewicht korrigieren und löschen
+
+- Unter **Gewicht → Messwerte bearbeiten / löschen** steht eine vollständig chronologisch sortierte Liste aller Gewichtsmessungen bereit, unabhängig vom ausgewählten Zeitraum des Diagramms. Die Anzahl gespeicherter Einträge wird direkt auf der Schaltfläche angezeigt.
+- Bei jedem Eintrag können Gewichtswert, Datum und Uhrzeit nachträglich bearbeitet werden. Nach dem Speichern wird die Liste erneut angezeigt.
+- **Löschen** fragt mit Datum und konkretem Gewichtswert nach einer Bestätigung. Dabei wird ausschließlich die ausgewählte Messung aus der SQLite-Datenbank entfernt. Alle übrigen Gewichts- und Trainingsdaten bleiben erhalten.
+- Gewichtskurve, Verlauf, Kennzahlen, JSON-/CSV-/Excel-Export und die Zwischenablage-Auswertung verwenden den aktuellen Datenbankstand und werden nach Änderungen neu dargestellt.
+- Das Datenbankschema bleibt unverändert. Die Version wird als signiertes Pre-Release für den Update-Test veröffentlicht.
