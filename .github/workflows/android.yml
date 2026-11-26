@@ -87,11 +87,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.5.0-build${GITHUB_RUN_NUMBER}"
-          NAME="Trainingsapp-v0.5.0-build${GITHUB_RUN_NUMBER}-signed.apk"
+          TAG="v0.5.1-build${GITHUB_RUN_NUMBER}"
+          NAME="Trainingsapp-v0.5.1-build${GITHUB_RUN_NUMBER}-signed.apk"
           cp app/build/outputs/apk/release/app-release.apk "$NAME"
           gh release create "$TAG" "$NAME" \
             --target "$GITHUB_SHA" \
-            --title "Trainingsapp 0.5.0 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
+            --title "Trainingsapp 0.5.1 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
             --prerelease \
-            --notes "Version 0.5.0: Übungen während eines laufenden Trainings ersetzen und einen Grund hinterlegen, bereits bestätigte Sätze erhalten. Optionale Satzbemerkungen mit Speicherung im Verlauf, JSON, Excel und CSV. Updateprüfung beim App-Start und manuell: stabile Releases oder auch Pre-Releases; bewusster Download mit Signatur- und Versionsprüfung. Dauerhaft signierte Testversion."
+            --notes "Version 0.5.1: Trainingsdaten nach dem Speichern als lesbaren Text in die Zwischenablage kopieren oder als JSON-Datei sichern. Einzeltraining auch im Verlauf als Text kopierbar. Unter Daten & Sicherung kann der gesamte Trainingsbestand inklusive Trainingsphasen, Plänen, Sätzen, Notizen, Übungswechseln und Körpergewichten als ChatGPT-lesbarer Text kopiert werden. Keine Trainingsdaten werden automatisch versendet. Vorhandener Sofacockpit-basierter Update-Mechanismus erkennt auch diese neue Pre-Release-Version."

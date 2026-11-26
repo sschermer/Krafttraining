@@ -180,3 +180,12 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Updates werden ausschließlich nach Zustimmung heruntergeladen; HTTPS-Hostliste, Größenlimit, optionale SHA-256-Prüfsumme sowie APK-Paketname, Versionscode und Signaturfingerabdruck werden geprüft. Danach Übergabe an den Android-Installer, ohne stilles Installieren.
 - Die GitHub-Releasetags werden nach Version **und Buildnummer** verglichen, da auch spätere Builds derselben Version eine höhere Android-`versionCode` besitzen.
 
+
+## Version 0.5.1 – Trainingsdaten in die Zwischenablage
+
+- Nach **Training abschließen und speichern** erscheinen drei Alternativen: **JSON herunterladen**, **Text kopieren** und **Später**.
+- **Text kopieren** legt den lesbaren, vollständig strukturierten Inhalt der gespeicherten Trainingseinheit in die Android-Zwischenablage. Datum und Zeit, A/B, Phase, vorangegangene Kondition, sämtliche absolvierten Sätze, Gewichtseinheit, Wiederholungen beziehungsweise Sekunden, RIR, Satzbemerkungen und dokumentierte Übungswechsel bleiben erhalten.
+- Im **Verlauf** kann jede gespeicherte Trainingseinheit sowohl als JSON-Datei exportiert als auch als lesbarer Text in die Zwischenablage kopiert werden.
+- Im Bereich **Daten & Sicherung** erscheint unmittelbar neben dem vollständigen JSON-Backup die Option **Alle Trainingsdaten als Text kopieren**. Der lesbare Text umfasst alle Trainingsphasen und A/B-Pläne, die vollständige Trainingshistorie, Satzbemerkungen, Übungswechsel, Gewichtsmessungen und den Übungskatalog einschließlich archivierter Übungen.
+- Nur die Zwischenablage wird beschrieben; es gibt keine automatische ChatGPT-Verbindung, keinen Upload und keine API-Kosten. Der kopierte Text ist zur Auswertung gedacht, nicht als wiederherstellbare JSON-Datensicherung.
+- Version **0.5.1** wird als Pre-Release veröffentlicht und besitzt einen höheren Android-Versioncode als **0.5.0 Build 51**, damit die automatische und manuelle Updateprüfung getestet werden kann.
