@@ -77,6 +77,138 @@ object DataExport {
         return "Trainingsapp-"+day+"-"+session.plan+"-"+session.id+".json"
     }
 
+
+    /**
+     * Lesbarer Export mit genau denselben trainingsbezogenen Informationen wie
+     * die Einzeltraining-JSON: Datum, Phase, Kondition, Uebungen, Saetze, RIR,
+     * Bemerkungen und Uebungswechsel. Keine direkte Uebertragung an ChatGPT.
+     */
+    fun workoutText(store:Store,sessionId:Long):String {
+        val session=store.session(sessionId) ?: error("Trainingseinheit nicht gefunden.")
+        return buildString {
+            append("TRAININGSAPP - EINZELTRAINING ZUR AUSWERTUNG\n")
+            append("Exportiert: ").append(date(System.currentTimeMillis())).append("\n")
+            append("Format: lesbarer Text, entspricht Einzeltraining-JSON Schema 2\n\n")
+            appendWorkoutText(store,session,this)
+        }
+    }
+
+    private fun appendWorkoutText(store:Store,session:TrainingSession,out:StringBuilder) {
+        val phase=store.phase(session.phaseId)
+        out.append("Training-ID: ").append(session.id).append("\n")
+        out.append("Trainingsdatum: ").append(date(session.timestamp)).append("\n")
+        out.append("Trainingstyp: ").append(session.plan).append("\n")
+        out.append("Trainingsphase: ").append(phase?.name ?: "Phase "+session.phaseId)
+            .append(" (ID ").append(session.phaseId).append(")\n")
+        out.append("Kondition vor dem Krafttraining: ")
+            .append(if(session.cardio)"Ja" else "Nein").append("\n")
+        out.append("Konditionsart: ").append(session.cardioType.ifBlank { "Nicht angegeben" }).append("\n")
+        out.append("Konditionsdauer: ").append(session.cardioMinutes).append(" Minuten\n")
+        out.append("GELEISTETE SAETZE:\n")
+        val grouped=store.sets(session.id).groupBy { it.exerciseId }
+        if(grouped.isEmpty())out.append("  Keine Saetze gespeichert\n")
+        for((exerciseId,sets) in grouped) {
+            val exercise=store.exercise(exerciseId)
+            out.append("- Uebung: ").append(exercise?.name ?: "Unbekannte Uebung")
+                .append(" (ID ").append(exerciseId).append(")\n")
+            out.append("  Kategorie: ").append(exercise?.category ?: "Unbekannt").append("\n")
+            out.append("  Typ: ").append(if(exercise?.kind=="time")"Haltedauer" else "Wiederholungen")
+                .append("\n")
+            out.append("  Gewicht bezogen auf: ")
+                .append(if(exercise?.perSide==true)"pro Seite" else "gesamte Uebung")
+                .append("\n")
+            for(set in sets.sortedBy { it.number }) {
+                out.append("  Satz ").append(set.number).append(": ")
+                if(exercise?.kind=="time") {
+                    out.append(set.seconds?.toString() ?: "Nicht angegeben").append(" Sekunden")
+                    if(set.weight!=null)out.append(" | Gewicht: ").append(formatNumber(set.weight)).append(" kg")
+                } else {
+                    out.append("Gewicht: ").append(set.weight?.let {formatNumber(it)} ?: "Nicht angegeben")
+                        .append(" kg | Wiederholungen: ").append(set.reps?.toString() ?: "Nicht angegeben")
+                }
+                out.append(" | RIR: ").append(set.rir?.let {formatNumber(it)} ?: "Nicht angegeben")
+                    .append("\n")
+                if(set.note.isNotBlank()) {
+                    out.append("    Bemerkung: ")
+                        .append(set.note.trim().replace("\r\n","\n").replace("\n","\n    "))
+                        .append("\n")
+                }
+            }
+        }
+        out.append("UEBUNGSWECHSEL:\n")
+        val swaps=store.exerciseSwaps(session.id)
+        if(swaps.isEmpty())out.append("  Keine\n")
+        for(swap in swaps) {
+            out.append("- Urspruengliche Uebung: ")
+                .append(store.exercise(swap.originalExerciseId)?.name ?: "Unbekannt")
+                .append(" (ID ").append(swap.originalExerciseId).append(")\n")
+            out.append("  Ersatzuebung: ")
+                .append(store.exercise(swap.replacementExerciseId)?.name ?: "Unbekannt")
+                .append(" (ID ").append(swap.replacementExerciseId).append(")\n")
+            out.append("  Grund: ").append(swap.reason.ifBlank { "Nicht angegeben" }).append("\n")
+        }
+    }
+
+    /**
+     * Gesamter auswertungsrelevanter Bestand: alle Trainings, A/B-Plaene,
+     * Trainingsphasen, Uebungskatalog und Koerpergewichtswerte. Kein
+     * Datenbanksicherungsformat; der bestehende JSON-Backup-Export bleibt separat.
+     */
+    fun fullTrainingText(store:Store):String = buildString {
+        append("TRAININGSAPP - GESAMTE TRAININGSDATEN ZUR CHATGPT-AUSWERTUNG\n")
+        append("Exportiert: ").append(date(System.currentTimeMillis())).append("\n")
+        append("Dies ist ein lesbarer Bericht, keine wiederherstellbare Datensicherung.\n\n")
+        append("TRAININGSPHASEN UND A/B-PLAENE\n")
+        val phases=store.phases().sortedBy { it.id }
+        if(phases.isEmpty())append("Keine Trainingsphase vorhanden.\n")
+        for(phase in phases) {
+            append("Phase ").append(phase.id).append(": ").append(phase.name)
+                .append(" | Beginn: ").append(date(phase.startedAt))
+                .append(" | Abschluss: ").append(phase.endedAt?.let {date(it)} ?: "Noch aktiv")
+                .append("\n")
+            for(plan in listOf("A","B")) {
+                append("  Trainingsplan ").append(plan).append(":\n")
+                val entries=store.planEntries(plan,phase.id)
+                if(entries.isEmpty())append("    Keine Uebungen ausgewaehlt\n")
+                for((exercise,targetSets) in entries) {
+                    append("    - ").append(exercise.name).append(" (ID ").append(exercise.id)
+                        .append(") | Kategorie: ").append(exercise.category)
+                        .append(" | Zielsaetze: ").append(targetSets)
+                        .append(" | Typ: ").append(if(exercise.kind=="time")"Haltedauer" else "Wiederholungen")
+                        .append(" | Equipment: ").append(exercise.equipment)
+                        .append(" | Gewicht pro Seite: ").append(if(exercise.perSide)"Ja" else "Nein")
+                        .append("\n")
+                }
+            }
+        }
+        append("\nTRAININGSVERLAUF (chronologisch)\n")
+        val sessions=store.sessions()
+        if(sessions.isEmpty())append("Keine abgeschlossenen Trainings vorhanden.\n")
+        for((index,session) in sessions.withIndex()) {
+            append("\n=== Training ").append(index+1).append(" von ").append(sessions.size).append(" ===\n")
+            appendWorkoutText(store,session,this)
+        }
+        append("\nKOERPERGEWICHT\n")
+        val weights=store.bodyWeights()
+        if(weights.isEmpty())append("Keine Gewichtsmessungen vorhanden.\n")
+        for(weight in weights) {
+            append("- ").append(date(weight.timestamp)).append(": ")
+                .append(formatNumber(weight.kg)).append(" kg\n")
+        }
+        append("\nUEBUNGSKATALOG (einschliesslich eigener und archivierter Uebungen)\n")
+        val exercises=store.exercises(includeArchived=true)
+        if(exercises.isEmpty())append("Keine Uebungen vorhanden.\n")
+        for(ex in exercises) {
+            append("- ID ").append(ex.id).append(": ").append(ex.name)
+                .append(" | Kategorie: ").append(ex.category)
+                .append(" | Typ: ").append(if(ex.kind=="time")"Haltedauer" else "Wiederholungen")
+                .append(" | Geraet: ").append(ex.equipment)
+                .append(" | Gewicht pro Seite: ").append(if(ex.perSide)"Ja" else "Nein")
+                .append(" | Archiviert: ").append(if(ex.archived)"Ja" else "Nein")
+                .append("\n")
+        }
+    }
+
     private fun csvCell(value:Any?):String {
         val s=value?.toString() ?: ""
         return "\"" + s.replace("\"","\"\"") + "\""
