@@ -19,7 +19,7 @@ object DataExport {
         val timestampFormat=SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX",Locale.GERMANY)
         val result=org.json.JSONObject()
             .put("format","TrainingsappSingleWorkout")
-            .put("schemaVersion",1)
+            .put("schemaVersion",2)
             .put("exportedAt",timestampFormat.format(Date()))
             .put("notes","Ein einzelnes Krafttraining. Gewicht ist in kg angegeben; 'proSeite' bezeichnet die Gewichtseinheit. RIR ist optional.")
         val context=org.json.JSONObject()
@@ -51,12 +51,23 @@ object DataExport {
                     .put("wiederholungen",set.reps ?: org.json.JSONObject.NULL)
                     .put("sekunden",set.seconds ?: org.json.JSONObject.NULL)
                     .put("rir",set.rir ?: org.json.JSONObject.NULL)
+                    .put("bemerkung",set.note)
                 items.put(entry)
             }
             item.put("saetze",items)
             list.put(item)
         }
         result.put("uebungen",list)
+        val swaps=org.json.JSONArray()
+        for(event in store.exerciseSwaps(session.id)) {
+            swaps.put(org.json.JSONObject()
+                .put("urspruenglicheUebungId",event.originalExerciseId)
+                .put("urspruenglicheUebung",store.exercise(event.originalExerciseId)?.name ?: "")
+                .put("ersatzUebungId",event.replacementExerciseId)
+                .put("ersatzUebung",store.exercise(event.replacementExerciseId)?.name ?: "")
+                .put("grund",event.reason))
+        }
+        result.put("uebungswechsel",swaps)
         return result.toString(2).toByteArray(Charsets.UTF_8)
     }
 
@@ -72,7 +83,7 @@ object DataExport {
     }
     fun csv(store:Store):ByteArray {
         val header=listOf("Datum","Trainingsphase","Training","Kondition vorher","Art Kondition","Minuten Kondition",
-            "Übung","Satz","Gewicht (kg)","Gewicht pro Seite","Wiederholungen","Sekunden","RIR")
+            "Übung","Satz","Gewicht (kg)","Gewicht pro Seite","Wiederholungen","Sekunden","RIR","Bemerkung")
         val lines=mutableListOf(header.joinToString(";") { csvCell(it) })
         for(session in store.sessions()) {
             val all=store.sets(session.id)
@@ -82,7 +93,7 @@ object DataExport {
                     date(session.timestamp), store.phase(session.phaseId)?.name ?: "Trainingsphase "+session.phaseId, session.plan, if(session.cardio)"Ja" else "Nein",
                     session.cardioType, session.cardioMinutes, e?.name ?: "",
                     s.number, s.weight, if(e?.perSide==true)"Ja" else "Nein",
-                    s.reps, s.seconds, s.rir
+                    s.reps, s.seconds, s.rir, s.note
                 )
                 lines.add(row.joinToString(";") { csvCell(it) })
             }
@@ -144,7 +155,7 @@ object DataExport {
     }
     fun xlsx(store:Store):ByteArray {
         val sheets=Store.TABLES.map { table(store,it) }
-        val names=listOf("Trainingsphasen","Uebungen","Trainingsplaene","Trainingseinheiten","Einzelsaetze","Koerpergewicht")
+        val names=listOf("Trainingsphasen","Uebungen","Trainingsplaene","Trainingseinheiten","Einzelsaetze","Uebungswechsel","Koerpergewicht")
         val out=ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
             fun add(path:String,content:String) {
