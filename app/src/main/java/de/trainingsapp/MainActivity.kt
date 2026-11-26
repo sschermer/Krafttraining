@@ -64,7 +64,8 @@ class MainActivity : Activity() {
         viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
         restoreDraft()
         render()
-        if(savedInstanceState==null)updates.startAutomaticCheck()
+        // The updater checks from onResume, including warm starts where
+        // Android reuses this Activity and onCreate is never called.
     }
     private fun workPrefs()=getSharedPreferences("unfinished_workout", MODE_PRIVATE)
 
