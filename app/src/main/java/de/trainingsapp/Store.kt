@@ -304,6 +304,14 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         }
     }
 
+    fun mostRecentNote(exerciseId:Long):String? =
+        query("""SELECT t.note FROM training_sets t
+            JOIN sessions s ON s.id=t.session_id
+            WHERE t.exercise_id=? AND LENGTH(TRIM(t.note))>0
+            ORDER BY s.timestamp DESC,s.id DESC,t.set_number DESC LIMIT 1""",
+            arrayOf(exerciseId.toString())) {it.getString(0)}
+            .firstOrNull()
+
     fun recentSets(exerciseId: Long): List<TrainingSet> {
         val ids = query("""SELECT t.session_id FROM training_sets t
             JOIN sessions s ON s.id=t.session_id
