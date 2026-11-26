@@ -247,11 +247,18 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         }.firstOrNull()
 
     fun sets(sessionId:Long):List<TrainingSet> = query(
-        "SELECT id,session_id,exercise_id,set_number,weight,reps,seconds,rir FROM training_sets WHERE session_id=? ORDER BY set_number",
+        "SELECT id,session_id,exercise_id,set_number,weight,reps,seconds,rir,note FROM training_sets WHERE session_id=? ORDER BY set_number",
         arrayOf(sessionId.toString())) { c ->
         TrainingSet(c.getLong(0),c.getLong(1),c.getLong(2),c.getInt(3),
-            c.optDouble(4),c.optInt(5),c.optInt(6),c.optDouble(7))
+            c.optDouble(4),c.optInt(5),c.optInt(6),c.optDouble(7),c.getString(8) ?: "")
     }
+    fun exerciseSwaps(sessionId:Long):List<ExerciseSwap> =
+        query("""SELECT id,session_id,original_exercise_id,replacement_exercise_id,reason,position
+            FROM exercise_swaps WHERE session_id=? ORDER BY position,id""",
+            arrayOf(sessionId.toString())) { c ->
+            ExerciseSwap(c.getLong(0),c.getLong(1),c.getLong(2),c.getLong(3),
+                c.getString(4),c.getInt(5))
+        }
     // +1 = unambiguous improvement, -1 = decline, 0 = unchanged/ambiguous.
     // Compare with the most recent earlier workout of the same plan containing
     // this exercise, ordered by the user's actual training date.
@@ -359,7 +366,19 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
                     reps?.let { put("reps",it) }
                     seconds?.let { put("seconds",it) }
                     row.rir.trim().replace(',','.').toDoubleOrNull()?.let { put("rir",it) }
+                    put("note",row.note)
                 })
+            }
+            entries.forEachIndexed {position,entry ->
+                entry.replacedById?.let {replacementId ->
+                    db.insertOrThrow("exercise_swaps",null,ContentValues().apply {
+                        put("session_id",sessionId)
+                        put("original_exercise_id",entry.exercise.id)
+                        put("replacement_exercise_id",replacementId)
+                        put("reason",entry.replacementReason)
+                        put("position",position)
+                    })
+                }
             }
             db.setTransactionSuccessful()
             return sessionId
@@ -441,6 +460,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
                     set.reps.trim().toIntOrNull()?.let {put("reps",it)}
                     set.seconds.trim().toIntOrNull()?.let {put("seconds",it)}
                     set.rir.trim().replace(',','.').toDoubleOrNull()?.let {put("rir",it)}
+                    put("note",set.note)
                 })
             }
             db.setTransactionSuccessful()
@@ -480,7 +500,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         }
     }
     fun backupJson():String {
-        val root=JSONObject().put("format","TrainingsappBackup").put("version",2)
+        val root=JSONObject().put("format","TrainingsappBackup").put("version",3)
         for(t in TABLES) {
             val columns=columns(t)
             val list=JSONArray()
@@ -496,10 +516,12 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
     fun restoreJson(text:String) {
         val root=JSONObject(text)
         val version=root.optInt("version")
-        require(root.optString("format")=="TrainingsappBackup" && version in 1..2) {
+        require(root.optString("format")=="TrainingsappBackup" && version in 1..3) {
             "Keine gültige Trainingsapp-Sicherung"
         }
-        for(t in TABLES) if(t!="training_phases" || version==2) {
+        for(t in TABLES) {
+            if((t=="training_phases" && version==1) ||
+                (t=="exercise_swaps" && version<3)) continue
             require(root.has(t)) {"Tabelle fehlt: $t"}
         }
         val db=writableDatabase
@@ -507,6 +529,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         try {
             for(t in TABLES.reversed()) db.delete(t,null,null)
             for(t in TABLES) {
+                if(version<3 && t=="exercise_swaps") continue
                 if(version==1 && t=="training_phases") {
                     db.insertOrThrow("training_phases",null,ContentValues().apply {
                         put("id",1);put("name","Trainingsphase 1")
