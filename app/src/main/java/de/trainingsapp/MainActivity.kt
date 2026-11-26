@@ -92,7 +92,8 @@ class MainActivity : Activity() {
                 .put("sets",rows)
                 .put("replacedById",entry.replacedById ?: JSONObject.NULL)
                 .put("replacementReason",entry.replacementReason)
-                .put("replacementForId",entry.replacementForId ?: JSONObject.NULL))
+                .put("replacementForId",entry.replacementForId ?: JSONObject.NULL)
+                .put("setNumberOffset",entry.setNumberOffset))
         }
         root.put("entries",entries)
         workPrefs().edit().putString("active",root.toString()).apply()
@@ -122,7 +123,8 @@ class MainActivity : Activity() {
                     restored.add(ExerciseDraft(exercise,sets,
                         if(item.isNull("replacedById"))null else item.optLong("replacedById").takeIf {it>0L},
                         item.optString("replacementReason",""),
-                        if(item.isNull("replacementForId"))null else item.optLong("replacementForId").takeIf {it>0L}
+                        if(item.isNull("replacementForId"))null else item.optLong("replacementForId").takeIf {it>0L},
+                        item.optInt("setNumberOffset",0)
                     ))
                 }
             }
@@ -526,10 +528,12 @@ class MainActivity : Activity() {
                 .setView(container)
                 .setNegativeButton("Zurück",null)
                 .setPositiveButton("Ersetzen"){_,_->
-                    val pending=entry.sets.count {!it.completed}.coerceAtLeast(1)
+                    val completedUntil=entry.sets.indexOfLast {it.completed}+1
+                    val pending=(entry.sets.size-completedUntil).coerceAtLeast(1)
                     val replacement=ExerciseDraft(exercise,
                         MutableList(pending){SetDraft()},
-                        replacementForId=entry.exercise.id)
+                        replacementForId=entry.exercise.id,
+                        setNumberOffset=entry.setNumberOffset+completedUntil)
                     entry.replacedById=exercise.id
                     entry.replacementReason=reason.text.toString().trim()
                     val index=current.indexOf(entry)
@@ -592,7 +596,7 @@ class MainActivity : Activity() {
                     val result=if(item.exercise.kind=="time")
                         (finished.seconds+" s") else (finished.weight.ifBlank{"–"}+
                         " kg / "+finished.reps+" Wdh.")
-                    add(c,text("Erhaltener Satz "+(index+1)+": "+result+
+                    add(c,text("Erhaltener Satz "+(item.setNumberOffset+index+1)+": "+result+
                         (if(finished.note.isBlank())"" else " · "+finished.note),12f))
                 }
                 val next=list.firstOrNull {it.exercise.id==item.replacedById}
@@ -629,7 +633,7 @@ class MainActivity : Activity() {
             add(c,headings);gap(c,4)
             item.sets.forEachIndexed {i,s ->
                 val r=row()
-                add(r,text((i+1).toString()+".",14f,true),30)
+                add(r,text((item.setNumberOffset+i+1).toString()+".",14f,true),30)
                 if(item.exercise.kind=="time") {
                     val sec=edit(s.seconds,"Sek.",true)
                     add(r,sec,75);watch(sec){s.seconds=it;saveDraft()}
@@ -1055,7 +1059,7 @@ class MainActivity : Activity() {
                     set.rir?.let {formatNumber(it)} ?: "",
                     true,set.note
                 )
-            }.toMutableList())
+            }.toMutableList(),setNumberOffset=entry.value.minOf {it.number}-1)
         }.toMutableList()
         if(edits.isEmpty()) {info("Für diese Einheit sind keine Sätze vorhanden.");return}
         var selectedDate=session.timestamp
@@ -1091,7 +1095,7 @@ class MainActivity : Activity() {
                 add(c,text(item.exercise.name,15f,true));gap(c,7)
                 item.sets.forEachIndexed {index,set->
                     val r=row()
-                    add(r,text((index+1).toString()+".",13f,true),28)
+                    add(r,text((item.setNumberOffset+index+1).toString()+".",13f,true),28)
                     if(item.exercise.kind=="time") {
                         val secs=edit(set.seconds,"Sek.",true)
                         add(r,secs,75);watch(secs){set.seconds=it}
