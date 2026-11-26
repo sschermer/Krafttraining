@@ -189,3 +189,11 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Im Bereich **Daten & Sicherung** erscheint unmittelbar neben dem vollständigen JSON-Backup die Option **Alle Trainingsdaten als Text kopieren**. Der lesbare Text umfasst alle Trainingsphasen und A/B-Pläne, die vollständige Trainingshistorie, Satzbemerkungen, Übungswechsel, Gewichtsmessungen und den Übungskatalog einschließlich archivierter Übungen.
 - Nur die Zwischenablage wird beschrieben; es gibt keine automatische ChatGPT-Verbindung, keinen Upload und keine API-Kosten. Der kopierte Text ist zur Auswertung gedacht, nicht als wiederherstellbare JSON-Datensicherung.
 - Version **0.5.1** wird als Pre-Release veröffentlicht und besitzt einen höheren Android-Versioncode als **0.5.0 Build 51**, damit die automatische und manuelle Updateprüfung getestet werden kann.
+
+## Version 0.5.2 – Stabilere Updatesuche mit Diagnose
+
+- Fehlerursache: Die bisherige automatische Updatesuche wurde nur beim vollständigen Erstellen einer frischen Activity gestartet, nicht bei der Wiederaufnahme einer weiterhin laufenden Activity. Die Prüfung wird nun beim Wiederöffnen im Vordergrund aufgerufen, mit Drosselung gegen wiederholte GitHub-Anfragen.
+- Diagnose: Unter Daten → Update-Einstellungen stehen letzter Suchzeitpunkt und ein lesbarer Status einschließlich Fehlergrund. Bei manueller Prüfung erscheint die konkrete Ursache statt einer pauschalen Meldung.
+- Absicherung: Unit-Tests prüfen die Erkennung von v0.5.1-build54 gegenüber installiertem 0.5.0 Build 51, nur stabile Releases, übersprungene Builds und spätere Builds derselben Versionsnummer.
+- Die bestehenden Installationsprüfungen für Signatur, Paket, Android-Versioncode, Download-Herkunft und Prüfsumme bleiben erhalten.
+- Die 0.5.2-APK wird als Pre-Release veröffentlicht.

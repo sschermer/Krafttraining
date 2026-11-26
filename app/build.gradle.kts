@@ -17,7 +17,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = System.getenv("BUILD_VERSION_CODE")?.toIntOrNull() ?: 2
-        versionName = "0.5.1"
+        versionName = "0.5.2"
     }
     if (hasReleaseSigning) {
         signingConfigs {
@@ -46,4 +46,6 @@ android {
 // Needed to provide the verified private APK to Android\'s installer.
 dependencies {
     implementation("androidx.core:core:1.13.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

@@ -22,6 +22,9 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Test GitHub release recognition
+        run: gradle --no-daemon :app:testDebugUnitTest
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
@@ -87,11 +90,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.5.1-build${GITHUB_RUN_NUMBER}"
-          NAME="Trainingsapp-v0.5.1-build${GITHUB_RUN_NUMBER}-signed.apk"
+          TAG="v0.5.2-build${GITHUB_RUN_NUMBER}"
+          NAME="Trainingsapp-v0.5.2-build${GITHUB_RUN_NUMBER}-signed.apk"
           cp app/build/outputs/apk/release/app-release.apk "$NAME"
           gh release create "$TAG" "$NAME" \
             --target "$GITHUB_SHA" \
-            --title "Trainingsapp 0.5.1 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
+            --title "Trainingsapp 0.5.2 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
             --prerelease \
-            --notes "Version 0.5.1: Trainingsdaten nach dem Speichern als lesbaren Text in die Zwischenablage kopieren oder als JSON-Datei sichern. Einzeltraining auch im Verlauf als Text kopierbar. Unter Daten & Sicherung kann der gesamte Trainingsbestand inklusive Trainingsphasen, Plänen, Sätzen, Notizen, Übungswechseln und Körpergewichten als ChatGPT-lesbarer Text kopiert werden. Keine Trainingsdaten werden automatisch versendet. Vorhandener Sofacockpit-basierter Update-Mechanismus erkennt auch diese neue Pre-Release-Version."
+            --notes "Version 0.5.2: Zuverlaessigere automatische Updatesuche beim erneuten Oeffnen der App, auch wenn Android die bisherige Activity weiterverwendet. Anzeige von Datum, Status und Fehlergrund der letzten Updatesuche unter Daten > Update-Einstellungen. Zusaetzliche Tests pruefen die Erkennung von neuen Pre-Releases, stabilen Releases und Buildnummern. Alle Trainingsdaten bleiben erhalten."
