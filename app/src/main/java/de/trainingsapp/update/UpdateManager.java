@@ -39,7 +39,6 @@ public final class UpdateManager implements AutoCloseable {
     private final String installedName;
     private volatile boolean closed=false;
     private boolean resumed=false,checking=false,manualRequested=false,downloading=false;
-    private long lastAutoAttemptElapsed=Long.MIN_VALUE;
     private ReleaseCatalog pendingCatalog;
     private boolean pendingManual;
     private ReleaseCatalog.Release permissionRelease,approvedDownload,verifiedRelease;
@@ -75,17 +74,14 @@ public final class UpdateManager implements AutoCloseable {
         resumed=true;
         schedule();
         // onCreate is not called again when Android simply resumes an existing
-        // Activity. Check on foreground entry too, with a small rate-limit
-        // guard so returning from settings or file pickers does not spam GitHub.
+        // Activity. Check on every foreground entry; a pending network request
+        // is reused rather than spawning a concurrent query.
         onForegroundAutomaticCheck();
     }
     private void onForegroundAutomaticCheck(){
-        if(!automatic()||closed)return;
-        long now=android.os.SystemClock.elapsedRealtime();
-        if(lastAutoAttemptElapsed!=Long.MIN_VALUE &&
-            now-lastAutoAttemptElapsed<60_000L)return;
-        lastAutoAttemptElapsed=now;
-        check(false);
+        // Each return to the foreground counts as an app start. Rely on the
+        // in-flight guard in check() to avoid concurrent GitHub queries.
+        if(automatic()&&!closed)check(false);
     }
     private void recordStatus(String value){
         prefs.edit().putString("last_status",value)
