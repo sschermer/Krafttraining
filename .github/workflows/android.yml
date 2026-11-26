@@ -90,11 +90,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.5.2-build${GITHUB_RUN_NUMBER}"
-          NAME="Trainingsapp-v0.5.2-build${GITHUB_RUN_NUMBER}-signed.apk"
+          TAG="v0.5.3-build${GITHUB_RUN_NUMBER}"
+          NAME="Trainingsapp-v0.5.3-build${GITHUB_RUN_NUMBER}-signed.apk"
           cp app/build/outputs/apk/release/app-release.apk "$NAME"
           gh release create "$TAG" "$NAME" \
             --target "$GITHUB_SHA" \
-            --title "Trainingsapp 0.5.2 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
+            --title "Trainingsapp 0.5.3 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
             --prerelease \
-            --notes "Version 0.5.2: Zuverlaessigere automatische Updatesuche beim erneuten Oeffnen der App, auch wenn Android die bisherige Activity weiterverwendet. Anzeige von Datum, Status und Fehlergrund der letzten Updatesuche unter Daten > Update-Einstellungen. Zusaetzliche Tests pruefen die Erkennung von neuen Pre-Releases, stabilen Releases und Buildnummern. Alle Trainingsdaten bleiben erhalten."
+            --notes "Version 0.5.3: Die redundanten Navigationspunkte A/B und Übungen sind in einem Reiter Trainingsplan zusammengefasst. A/B-Auswahl, aufklappbare Übungskategorien, neue Übungen, Bearbeiten, Archivieren, Trainingsphasen und Planverwaltung bleiben erhalten. Mit Pull-to-Refresh (am Seitenanfang nach unten wischen) kann auf jeder Hauptseite manuell nach GitHub Releases und Pre-Releases gesucht werden. Die Ladeanzeige bleibt bis zum Ende der Prüfung sichtbar. Keine Trainingsdaten werden durch die Neuerungen verändert."

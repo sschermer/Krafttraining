@@ -197,3 +197,11 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Absicherung: Unit-Tests prüfen die Erkennung von v0.5.1-build54 gegenüber installiertem 0.5.0 Build 51, nur stabile Releases, übersprungene Builds und spätere Builds derselben Versionsnummer.
 - Die bestehenden Installationsprüfungen für Signatur, Paket, Android-Versioncode, Download-Herkunft und Prüfsumme bleiben erhalten.
 - Die 0.5.2-APK wird als Pre-Release veröffentlicht.
+
+## Version 0.5.3 – Ein Trainingsplan-Reiter und Pull-to-Refresh
+
+- Die Navigation besitzt jetzt fünf Bereiche: Start, Trainingsplan, Verlauf, Gewicht und Daten. Der bisherige separate Reiter Übungen entfällt, ebenso die doppelte A/B-Übungsauswahl.
+- Der Trainingsplan-Reiter kombiniert A/B-Auswahl, Kategorien als aufklappbare Abschnitte, Checkboxen zur Planaufnahme, eigene Übungen und eigene Kategorien, Übungsbearbeitung, Archivieren/Reaktivieren, Anzeige archivierter Übungen, Training starten, Phase anlegen/abschließen und Plan leeren. Katalogpflege ist auch ohne aktive Phase möglich.
+- Über jeder Hauptseite liegt ein Android-SwipeRefreshLayout. Eine senkrechte Wischgeste nach unten am **oberen Rand des Seiteninhalts** löst eine manuelle GitHub-Updatesuche aus. Der Ladekreis bleibt bis zum Abschluss oder Fehler der Netzabfrage sichtbar; ein parallel laufender automatischer Check wird wiederverwendet.
+- Die Geste funktioniert auch, wenn der automatische Check in den Update-Einstellungen deaktiviert ist. Ein Update wird weiterhin erst nach ausdrücklicher Zustimmung heruntergeladen. Es werden keine Trainingsdaten gesendet.
+- SQLite-Datenbank, Trainingshistorie und vollständige Sicherungsformate bleiben unverändert.
