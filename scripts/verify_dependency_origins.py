@@ -9,13 +9,14 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import sys
 import time
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
@@ -51,6 +52,7 @@ for component in root.findall("v:components/v:component", ns):
         url = base + group.replace(".", "/") + "/" + name + "/" + version + "/" + filename
         cache = Path(args.cache_root) / group / name / version
         items.append((cache, filename, expected, url, origin, checksums[0]))
+indexed_items = {(item[0], item[1]): item for item in items}
 
 def file_digest(path, algorithm):
     digest = hashlib.new(algorithm)
@@ -59,41 +61,92 @@ def file_digest(path, algorithm):
             digest.update(chunk)
     return digest.hexdigest()
 
-def check(item):
-    cache, filename, expected, url, origin, element = item
-    try:
-        matches = [p for p in cache.glob("*/" + filename) if file_digest(p, "sha256") == expected]
-        if not matches:
-            raise ValueError("No cached artifact matches the proposed SHA-256")
-        for algorithm in ("sha256", "sha1"):
-            sidecar = url + "." + algorithm
-            for attempt in range(3):
-                try:
-                    with urlopen(sidecar, timeout=25) as response:
-                        final = urlsplit(response.geturl())
-                        if final.scheme != "https" or final.hostname != urlsplit(sidecar).hostname:
-                            raise ValueError("Publisher checksum redirected outside its HTTPS origin")
-                        published = response.read(4096).decode("ascii").strip().split()[0].lower()
+def cached_artifact(item):
+    cache, filename, expected, *_ = item
+    matches = [p for p in cache.glob("*/" + filename) if file_digest(p, "sha256") == expected]
+    if not matches:
+        raise ValueError("No cached artifact matches the proposed SHA-256")
+    return matches[0]
+
+def publisher_checksum(path, url):
+    for algorithm in ("sha256", "sha1"):
+        sidecar = url + "." + algorithm
+        for attempt in range(3):
+            try:
+                with urlopen(sidecar, timeout=25) as response:
+                    final = urlsplit(response.geturl())
+                    if final.scheme != "https" or final.netloc != urlsplit(sidecar).netloc:
+                        raise ValueError("Publisher checksum redirected outside its HTTPS origin")
+                    published = response.read(4096).decode("ascii").strip().split()[0].lower()
+                break
+            except HTTPError as error:
+                if error.code == 404:
+                    published = None
                     break
-                except HTTPError as error:
-                    if error.code == 404:
-                        published = None
-                        break
-                    if attempt == 2:
-                        raise
-                    time.sleep(0.3 * (attempt + 1))
-                except OSError:
-                    if attempt == 2:
-                        raise
-                    time.sleep(0.3 * (attempt + 1))
-            if published is None:
-                continue
-            if not re.fullmatch(r"[0-9a-f]{64}" if algorithm == "sha256" else r"[0-9a-f]{40}", published):
-                raise ValueError("Malformed publisher checksum")
-            if file_digest(matches[0], algorithm) != published:
-                raise ValueError("Publisher checksum differs from local bytes")
-            return item, f"{origin} HTTPS {algorithm} sidecar ({date.today().isoformat()})", None
-        raise ValueError("No publisher SHA-256/SHA-1 sidecar; requires manual review")
+                if attempt == 2:
+                    raise
+                time.sleep(0.3 * (attempt + 1))
+            except OSError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.3 * (attempt + 1))
+        if published is None:
+            continue
+        if not re.fullmatch(r"[0-9a-f]{64}" if algorithm == "sha256" else r"[0-9a-f]{40}", published):
+            raise ValueError("Malformed publisher checksum")
+        if file_digest(path, algorithm) != published:
+            raise ValueError("Publisher checksum differs from local bytes")
+        return algorithm
+    return None
+
+def published_variant_url(item):
+    cache, filename, _, url, *_ = item
+    # Gradle may store a published variant under the selected component, e.g.
+    # Guava's Android jar under its JRE component. Trust its URL only after the
+    # descriptor itself matches both our proposed SHA-256 and its publisher.
+    descriptor = indexed_items.get((cache, f"{cache.parent.name}-{cache.name}.module"))
+    if descriptor is None or filename.endswith(".module"):
+        return None
+    module = cached_artifact(descriptor)
+    if publisher_checksum(module, descriptor[3]) is None:
+        raise ValueError("Variant descriptor has no verifiable publisher checksum")
+    metadata = json.loads(module.read_text())
+    urls = {
+        urljoin(descriptor[3], artifact["url"])
+        for variant in metadata.get("variants", [])
+        for artifact in variant.get("files", [])
+        if artifact.get("name") == filename
+    }
+    if not urls:
+        return None
+    if len(urls) != 1:
+        raise ValueError("Ambiguous published variant URL")
+    candidate = urls.pop()
+    target, canonical = urlsplit(candidate), urlsplit(url)
+    module_root = canonical.path.rsplit("/", 2)[0] + "/"
+    path = target.path.removeprefix(module_root).split("/")
+    if (target.scheme != "https" or target.netloc != canonical.netloc
+        or target.query or target.fragment or not target.path.startswith(module_root)
+        or len(path) != 2 or path[0] in {".", ".."}
+        or not re.fullmatch(r"[A-Za-z0-9_.+~-]+", path[0])
+        or path[1] != filename):
+        raise ValueError("Variant URL leaves its canonical HTTPS Maven module")
+    return candidate if candidate != url else None
+
+def check(item):
+    _, _, _, url, origin, _ = item
+    try:
+        path = cached_artifact(item)
+        algorithm = publisher_checksum(path, url)
+        variant_note = ""
+        if algorithm is None:
+            variant = published_variant_url(item)
+            if variant:
+                algorithm = publisher_checksum(path, variant)
+                variant_note = " via verified Gradle module variant"
+        if algorithm is None:
+            raise ValueError("No publisher SHA-256/SHA-1 sidecar; requires manual review")
+        return item, f"{origin} HTTPS {algorithm} sidecar{variant_note} ({date.today().isoformat()})", None
     except Exception as error:
         return item, None, str(error)
 
