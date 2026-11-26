@@ -17,6 +17,8 @@ import androidx.core.content.FileProvider;
 import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Date;
 import java.text.SimpleDateFormat;
 import java.util.concurrent.ExecutorService;
@@ -48,6 +50,16 @@ public final class UpdateManager implements AutoCloseable {
     private ProgressBar progress;
     private TextView progressText;
     private final Runnable present=this::maybePresent;
+    // A pull-to-refresh spinner stops only after the GitHub query completes.
+    // Manual requests join an in-flight automatic query instead of duplicating it.
+    private final List<Runnable> checkCallbacks=new ArrayList<>();
+    private void finishCheckCallbacks(){
+        List<Runnable> callbacks=new ArrayList<>(checkCallbacks);
+        checkCallbacks.clear();
+        for(Runnable callback:callbacks) {
+            try{callback.run();}catch(RuntimeException ignored){}
+        }
+    }
 
     public UpdateManager(Activity activity) {
         this.activity=activity;
@@ -70,6 +82,10 @@ public final class UpdateManager implements AutoCloseable {
     private String skipKey(boolean include){return include?"skipped_all":"skipped_stable";}
     public void startAutomaticCheck(){onForegroundAutomaticCheck();}
     public void checkNow(){check(true);}
+    public void checkNow(Runnable finished){
+        if(finished!=null)checkCallbacks.add(finished);
+        check(true);
+    }
     public void onResume(){
         resumed=true;
         schedule();
@@ -106,13 +122,15 @@ public final class UpdateManager implements AutoCloseable {
         return !closed&&resumed&&!activity.isFinishing()&&!activity.isDestroyed()&&activity.hasWindowFocus();
     }
     private void check(boolean manual){
-        if(closed)return;
+        if(closed){finishCheckCallbacks();return;}
         if(installed==null||installedCode<0){
             if(manual)toast("Installierte Versionsnummer unbekannt.");
+            finishCheckCallbacks();
             return;
         }
         if(downloading||permissionRelease!=null||approvedDownload!=null||verifiedApk!=null){
             if(manual)toast("Ein Update wird bereits vorbereitet.");
+            finishCheckCallbacks();
             return;
         }
         manualRequested |= manual;
@@ -128,6 +146,7 @@ public final class UpdateManager implements AutoCloseable {
                     checking=false;pendingManual=manualRequested;manualRequested=false;
                     recordStatus("GitHub-Releases geladen; Versionsvergleich läuft.");
                     pendingCatalog=result;schedule();
+                    finishCheckCallbacks();
                 });
             }catch(Exception error){
                 String reason=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
@@ -137,6 +156,7 @@ public final class UpdateManager implements AutoCloseable {
                     boolean notify=manualRequested;manualRequested=false;
                     recordStatus("Updateprüfung fehlgeschlagen: "+reason);
                     if(notify)toast("Updateprüfung fehlgeschlagen: "+reason);
+                    finishCheckCallbacks();
                 });
             }
         });
@@ -389,6 +409,7 @@ public final class UpdateManager implements AutoCloseable {
         if(currentDialog!=null){currentDialog.dismiss();currentDialog=null;}
         if(verifiedApk!=null){verifiedApk.delete();verifiedApk=null;}
         permissionRelease=null;approvedDownload=null;pendingCatalog=null;
+        checkCallbacks.clear();
         worker.shutdownNow();
     }
 }
