@@ -214,7 +214,7 @@ public final class UpdateManager implements AutoCloseable {
             "Diese Testversion kann noch Fehler enthalten.":
             "Reguläres Release auf GitHub.",13));
         content.addView(text("Neuerungen:",14));
-        TextView notes=text(release.notes.isBlank()?"Keine Änderungsbeschreibung vorhanden.":release.notes,13);
+        TextView notes=text(release.notes.trim().isEmpty()?"Keine Änderungsbeschreibung vorhanden.":release.notes,13);
         ScrollView notesScroll=new ScrollView(activity);
         notesScroll.addView(notes);
         notesScroll.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(155)));
