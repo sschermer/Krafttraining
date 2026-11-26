@@ -166,3 +166,17 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Die JSON dient der Auswertung in ChatGPT oder anderen Werkzeugen und enthält nur die gewählte Trainingseinheit. Sie ist **keine Datenbank-Sicherung** und wird nicht durch die vorhandene Backup-Importfunktion akzeptiert.
 - Eine direkte Übergabe an einen ChatGPT-Chat ist ausdrücklich nicht vorgesehen.
 
+
+## Version 0.5.0 – Übungsaustausch, Satznotizen und Updates
+
+- Während laufender Einheiten ist **Übung ersetzen** verfügbar. Die Ersatzübung wird aus dem einklappbaren Übungskatalog gewählt, ein Grund kann optional eingegeben werden. Der A/B-Plan bleibt unverändert.
+- Vorher bestätigte Sätze der ursprünglichen Übung bleiben mit ihren tatsächlichen Übungswerten erhalten; der Austausch wird als eigener Datensatz gespeichert, unabhängig davon, ob vor dem Wechsel ein Satz abgeschlossen war.
+- **Austausch rückgängig** ist verfügbar, solange die neue Ersatzübung noch keinen bestätigten Satz hat und nicht erneut ersetzt wurde.
+- Jeder Satz hat eine optionale Bemerkung; diese wird im Entwurf, beim Speichern, bei nachträglichen Änderungen und in CSV/Excel/JSON mitgeführt.
+- Einzeltraining-JSON wird mit Schema 2 exportiert: Feld `bemerkung` je Satz und `uebungswechsel` mit Ausgangsübung, Ersatzübung und Grund.
+- SQLite-Schema 3 führt `training_sets.note` und `exercise_swaps` ein; bestehende Daten bleiben erhalten. Vollständige Datensicherungen verwenden Version 3, ältere Versionen 1 und 2 bleiben importierbar.
+- **Software-Updates**: automatischer Check bei App-Start, manuelle Suche auf der Startseite und in „Daten“. Update-Kanal: nur stabile Releases oder auch Pre-Releases (Standard). Popup unterscheidet beide und zeigt Version, Build, Größe und Neuerungen.
+- Aktionen: „Aktualisieren“, „Später“, „Überspringen“. Übersprungene Updates erscheinen wieder bei manueller Suche.
+- Updates werden ausschließlich nach Zustimmung heruntergeladen; HTTPS-Hostliste, Größenlimit, optionale SHA-256-Prüfsumme sowie APK-Paketname, Versionscode und Signaturfingerabdruck werden geprüft. Danach Übergabe an den Android-Installer, ohne stilles Installieren.
+- Die GitHub-Releasetags werden nach Version **und Buildnummer** verglichen, da auch spätere Builds derselben Version eine höhere Android-`versionCode` besitzen.
+

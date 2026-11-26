@@ -17,7 +17,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = System.getenv("BUILD_VERSION_CODE")?.toIntOrNull() ?: 2
-        versionName = "0.4.0"
+        versionName = "0.5.0"
     }
     if (hasReleaseSigning) {
         signingConfigs {
@@ -41,4 +41,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+}
+
+// Needed to provide the verified private APK to Android\'s installer.
+dependencies {
+    implementation("androidx.core:core:1.13.1")
 }

@@ -24,10 +24,12 @@ import java.util.Date
 import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
+import de.trainingsapp.update.UpdateManager
 import kotlin.math.max
 
 class MainActivity : Activity() {
     private lateinit var store: Store
+    private lateinit var updates: UpdateManager
     private lateinit var root: LinearLayout
     private lateinit var page: LinearLayout
     private var tab="Start"
@@ -58,9 +60,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         store=Store(this)
+        updates=UpdateManager(this)
         viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
         restoreDraft()
         render()
+        if(savedInstanceState==null)updates.startAutomaticCheck()
     }
     private fun workPrefs()=getSharedPreferences("unfinished_workout", MODE_PRIVATE)
 
@@ -142,9 +146,22 @@ class MainActivity : Activity() {
         draft=null
         workPrefs().edit().remove("active").commit()
     }
+    override fun onResume() {
+        super.onResume()
+        if(::updates.isInitialized)updates.onResume()
+    }
+    override fun onWindowFocusChanged(hasFocus:Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if(hasFocus && ::updates.isInitialized)updates.onWindowFocus()
+    }
     override fun onPause() {
         saveDraft()
+        if(::updates.isInitialized)updates.onPause()
         super.onPause()
+    }
+    override fun onDestroy() {
+        if(::updates.isInitialized)updates.close()
+        super.onDestroy()
     }
     private fun dp(n:Int):Int=(n*resources.displayMetrics.density+0.5f).toInt()
     private fun shape(color:Int,radius:Int=14,stroke:Int?=null):GradientDrawable =
@@ -391,6 +408,8 @@ class MainActivity : Activity() {
         add(page,button("Frühere Trainingsphasen ansehen",false) {
             tab="Verlauf";analysis="Tabelle";render()
         })
+        gap(page,7)
+        add(page,button("Nach Updates suchen",false){updates.checkNow()})
     }
 
     private fun chooseTrainingDate(initial:Long,accept:(Long)->Unit) {
@@ -1273,6 +1292,12 @@ class MainActivity : Activity() {
 
     private fun dataPage() {
         title("Daten & Sicherung","Alle Trainingsdaten bleiben lokal auf dem Gerät.")
+        val updateCard=card(page)
+        add(updateCard,text("Software-Updates",17f,true))
+        gap(updateCard,7)
+        add(updateCard,text("Beim Start automatisch prüfen, Pre-Releases berücksichtigen oder jederzeit manuell suchen.",13f,false,muted))
+        gap(updateCard,9)
+        add(updateCard,button("Update-Einstellungen und Prüfung",false){updates.showSettings()})
         val c=card(page)
         add(c,text("Daten exportieren",17f,true));gap(c,7)
         add(c,button("Excel-Datei herunterladen (.xlsx)") {saveFile("xlsx",
@@ -1316,6 +1341,10 @@ class MainActivity : Activity() {
     @Deprecated("Used for Android Storage Access Framework compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==UpdateManager.PERMISSION_REQUEST) {
+            updates.onPermissionReturn()
+            return
+        }
         if(resultCode!=RESULT_OK || data?.data==null)return
         try {
             val uri=data.data!!

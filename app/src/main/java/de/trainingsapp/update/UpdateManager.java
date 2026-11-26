@@ -55,7 +55,8 @@ public final class UpdateManager implements AutoCloseable {
             android.content.pm.PackageInfo info=activity.getPackageManager().getPackageInfo(
                 activity.getPackageName(),0);
             if(info.versionName!=null)name=info.versionName;
-            code=(int)info.getLongVersionCode();
+            code=(int)(android.os.Build.VERSION.SDK_INT>=28?
+                info.getLongVersionCode():info.versionCode);
         }catch(Exception ignored){}
         installedName=name;
         installed=ReleaseCatalog.Version.parse(name);
