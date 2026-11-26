@@ -90,11 +90,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.5.3-build${GITHUB_RUN_NUMBER}"
-          NAME="Trainingsapp-v0.5.3-build${GITHUB_RUN_NUMBER}-signed.apk"
+          TAG="v0.5.4-build${GITHUB_RUN_NUMBER}"
+          NAME="Trainingsapp-v0.5.4-build${GITHUB_RUN_NUMBER}-signed.apk"
           cp app/build/outputs/apk/release/app-release.apk "$NAME"
           gh release create "$TAG" "$NAME" \
             --target "$GITHUB_SHA" \
-            --title "Trainingsapp 0.5.3 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
+            --title "Trainingsapp 0.5.4 (Build ${GITHUB_RUN_NUMBER}) - signiert" \
             --prerelease \
-            --notes "Version 0.5.3: Die redundanten Navigationspunkte A/B und Übungen sind in einem Reiter Trainingsplan zusammengefasst. A/B-Auswahl, aufklappbare Übungskategorien, neue Übungen, Bearbeiten, Archivieren, Trainingsphasen und Planverwaltung bleiben erhalten. Mit Pull-to-Refresh (am Seitenanfang nach unten wischen) kann auf jeder Hauptseite manuell nach GitHub Releases und Pre-Releases gesucht werden. Die Ladeanzeige bleibt bis zum Ende der Prüfung sichtbar. Keine Trainingsdaten werden durch die Neuerungen verändert."
+            --notes "Version 0.5.4: Neues minimalistisches Hantel-App-Icon in den Farben der Trainingsapp. Android Adaptive Icon mit zentrierter heller Hantel, dunkelgruenem Verlaufshintergrund sowie Rund- und Monochrom-Varianten. Sonstige Trainingsfunktionen unveraendert."

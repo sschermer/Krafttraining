@@ -205,3 +205,9 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - Über jeder Hauptseite liegt ein Android-SwipeRefreshLayout. Eine senkrechte Wischgeste nach unten am **oberen Rand des Seiteninhalts** löst eine manuelle GitHub-Updatesuche aus. Der Ladekreis bleibt bis zum Abschluss oder Fehler der Netzabfrage sichtbar; ein parallel laufender automatischer Check wird wiederverwendet.
 - Die Geste funktioniert auch, wenn der automatische Check in den Update-Einstellungen deaktiviert ist. Ein Update wird weiterhin erst nach ausdrücklicher Zustimmung heruntergeladen. Es werden keine Trainingsdaten gesendet.
 - SQLite-Datenbank, Trainingshistorie und vollständige Sicherungsformate bleiben unverändert.
+
+## Version 0.5.4 – Android-App-Icon
+
+- Das freigegebene Hantelmotiv ohne Pfeil ist als zentrierte adaptive Android-Vordergrundgrafik hinterlegt (WebP mit Transparenz).
+- Dunkelgrüner Hintergrundverlauf, der zum Farbschema der App passt. Adaptive und runde Launcher-Symbole sowie eine monochrome Variante für Android-Themed-Icons sind vorhanden.
+- Die Icon-Einträge sind im AndroidManifest gesetzt. Trainingsdatenbank, Updatefunktion und sonstige App-Funktionen bleiben unverändert.
