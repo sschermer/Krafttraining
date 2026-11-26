@@ -34,7 +34,8 @@ data class SetDraft(
     var rir: String = "", var completed: Boolean = false, var note:String = ""
 )
 data class ExerciseDraft(val exercise:Exercise,val sets:MutableList<SetDraft>,
-    var replacedById:Long?=null,var replacementReason:String="",var replacementForId:Long?=null)
+    var replacedById:Long?=null,var replacementReason:String="",var replacementForId:Long?=null,
+    var setNumberOffset:Int=0)
 
 class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3) {
     companion object {
@@ -329,7 +330,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
     fun saveSession(plan:String, cardio:Boolean, cardioType:String, cardioMinutes:Int, entries:List<ExerciseDraft>, phaseId:Long=activePhase()?.id ?: 1L, timestamp:Long=System.currentTimeMillis()):Long {
         val confirmed=entries.flatMap { entry ->
             entry.sets.mapIndexedNotNull { index, row ->
-                if(row.completed) Triple(entry.exercise,index,row) else null
+                if(row.completed) Triple(entry.exercise,index+entry.setNumberOffset,row) else null
             }
         }
         require(confirmed.isNotEmpty()) { "Bitte mindestens einen Satz als erledigt markieren." }
@@ -432,7 +433,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         require(timestamp>0L) {"Ungültiges Datum."}
         val selected=entries.flatMap {entry ->
             entry.sets.mapIndexedNotNull {index,set ->
-                if(set.completed) Triple(entry.exercise,index,set) else null
+                if(set.completed) Triple(entry.exercise,index+entry.setNumberOffset,set) else null
             }
         }
         require(selected.isNotEmpty()) {"Mindestens einen absolvierten Satz auswählen."}
