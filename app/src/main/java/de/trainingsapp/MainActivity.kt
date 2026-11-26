@@ -46,7 +46,7 @@ class MainActivity : Activity() {
     private var activePhaseId:Long=1L
     private var workoutTimestamp:Long=System.currentTimeMillis()
     private var expandedCategory:String?=null
-    private var catalogExpandedCategory:String?=null
+    private var showArchivedExercises=false
     private var weightRangeDays:Int=90
     private var activeScroll: ScrollView?=null
     private var renderedTab=""
@@ -238,11 +238,21 @@ class MainActivity : Activity() {
         activeScroll=scroll
         page=column().apply {setPadding(dp(14),dp(16),dp(14),dp(20))}
         scroll.addView(page)
-        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        val refresh=androidx.swiperefreshlayout.widget.SwipeRefreshLayout(this).apply {
+            setColorSchemeColors(accent)
+            setProgressBackgroundColorSchemeColor(Color.WHITE)
+            setOnChildScrollUpCallback { _, _ -> scroll.canScrollVertically(-1) }
+            setOnRefreshListener {
+                // Pulling down triggers a manual search even if automatic
+                // update checks have been disabled.
+                updates.checkNow { isRefreshing=false }
+            }
+        }
+        refresh.addView(scroll)
+        root.addView(refresh,LinearLayout.LayoutParams(-1,0,1f))
         when(tab) {
             "Start"->home()
             "Training"->if(draft==null)plans() else workout()
-            "Übungen"->catalog()
             "Verlauf"->results()
             "Gewicht"->weightScreen()
             else->dataPage()
@@ -250,12 +260,14 @@ class MainActivity : Activity() {
         val nav=row().apply {
             setPadding(dp(3),dp(5),dp(3),dp(5));setBackgroundColor(Color.WHITE)
         }
-        val tabs=listOf("Start","Training","Übungen","Verlauf","Gewicht","Daten")
-        val icons=listOf("⌂","A/B","≡","↗","kg","⇩")
+        val tabs=listOf("Start","Training","Verlauf","Gewicht","Daten")
+        val labels=listOf("Start","Trainingsplan","Verlauf","Gewicht","Daten")
+        val icons=listOf("⌂","A/B","↗","kg","⇩")
         tabs.forEachIndexed {i,name ->
             val b=column().apply {gravity=Gravity.CENTER}
             add(b,text(icons[i],18f,true,if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
-            add(b,text(name,10f,tab==name,if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
+            add(b,text(labels[i],if(name=="Training")9f else 10f,tab==name,
+                if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
             b.setOnClickListener {tab=name;render()}
             nav.addView(b,LinearLayout.LayoutParams(0,dp(55),1f))
         }
@@ -271,7 +283,7 @@ class MainActivity : Activity() {
         val r=row()
         for(name in listOf("A","B")) {
             val b=button("Training $name",plan==name) {
-                plan=name;expandedCategory=null;catalogExpandedCategory=null;render()
+                plan=name;expandedCategory=null;render()
             }
             r.addView(b,LinearLayout.LayoutParams(0,dp(45),1f))
             if(name=="A")add(r,View(this),7,1)
@@ -742,137 +754,107 @@ class MainActivity : Activity() {
 
     private fun plans() {
         val phase=store.activePhase()
-        title("Trainingsplan zusammenstellen",phase?.name ?: "Keine aktive Trainingsphase")
+        title("Trainingsplan",phase?.name ?: "Keine aktive Trainingsphase")
         if(phase==null) {
-            add(page,text("Erstelle eine neue Trainingsphase, um Übungen für A und B festzulegen.",14f))
-            gap(page,12)
-            add(page,button("Neue Trainingsphase anlegen"){createPhaseDialog()})
-            return
+            val hint=card(page)
+            add(hint,text("Noch keine aktive Trainingsphase. Erstelle eine Phase, um A/B-Pläne zusammenzustellen.",14f,false,muted))
+            gap(hint,9)
+            add(hint,button("Neue Trainingsphase anlegen"){createPhaseDialog()})
+        } else {
+            planSelector(page)
         }
-        planSelector(page)
-        val selected=store.planEntries(plan,phase.id).map {it.first.id}.toSet()
-        val all=store.exercises()
-        add(page,text("Übungskategorien",17f,true));gap(page,3)
-        add(page,text("Eine Kategorie antippen, um Übungen auszuwählen. Die Zahl in Klammern zeigt bereits ausgewählte Übungen.",12f,false,muted))
-        gap(page,12)
-        val categories=(Store.CATEGORIES+all.map{it.category}).distinct()
-        for(category in categories) {
-            val exercises=all.filter {it.category==category}
-            if(exercises.isEmpty())continue
-            val chosen=exercises.count {it.id in selected}
-            val opened=expandedCategory==category
-            val box=card(page)
-            val headline=category+(if(chosen>0)" ($chosen)" else "")+(if(opened)"  ▴" else "  ▾")
-            add(box,button(headline,false) {
-                expandedCategory=if(opened)null else category
-                render()
-            })
-            if(opened) {
-                gap(box,10)
-                for(exercise in exercises) {
-                    val check=CheckBox(this).apply {
-                        text=exercise.name
-                        textSize=14f
-                        isChecked=exercise.id in selected
-                        setOnCheckedChangeListener {_,checked->
-                            try {
-                                if(checked) store.addToPlan(plan,exercise.id,phase.id)
-                                else store.removeFromPlan(plan,exercise.id,phase.id)
-                                render()
-                            } catch(e:Exception) {info(e.message ?: "Auswahl fehlgeschlagen.")}
-                        }
-                    }
-                    add(box,check)
-                }
-            }
-        }
-        val stats=card(page)
-        add(stats,text("Training $plan: ${selected.size} Übungen gewählt",15f,true))
-        gap(stats,6)
-        add(stats,text("Auch mehrere Übungen aus derselben Kategorie sind möglich.",12f,false,muted))
-        gap(stats,10)
-        add(stats,button("Training $plan beginnen"){askCardio()})
-        gap(page,7)
-        add(page,button("Zur Startseite",false){tab="Start";render()})
-        gap(page,8)
-        add(page,button("Trainingsphase abschließen",false){finishPhaseDialog(phase)})
-        if(store.planEntries("A",phase.id).isNotEmpty() ||
-            store.planEntries("B",phase.id).isNotEmpty()) {
-            gap(page,8)
-            add(page,button("A/B-Pläne vollständig leeren",false) {
-                if(draft!=null) {info("Bitte laufendes Training zuerst abschließen.");return@button}
-                AlertDialog.Builder(this).setTitle("Trainingspläne wirklich leeren?")
-                    .setMessage("Alle ausgewählten Übungen dieser Trainingsphase aus A und B entfernen? " +
-                        "Bereits absolvierte Trainingseinheiten und frühere Phasen bleiben erhalten.")
-                    .setNegativeButton("Abbrechen",null)
-                    .setPositiveButton("Pläne leeren"){_,_->
-                        try {
-                            store.clearCurrentPlans(phase.id)
-                            expandedCategory=null
-                            catalogExpandedCategory=null
-                            render()
-                            info("A und B sind jetzt leer.")
-                        } catch(e:Exception){info(e.message ?: "Leeren fehlgeschlagen.")}
-                    }.show()
-            })
-        }
-    }
 
-    private fun catalog() {
-        title("Übungskatalog","Eine Kategorie antippen: Übungen werden aufgeklappt.")
-        planSelector(page)
-        add(page,button("+ Eigene Übung"){exerciseDialog(null)})
-        gap(page,13)
-        add(page,text("Gewünschte Übungen für Training "+plan+" per Häkchen auswählen.",12f,false,muted))
-        gap(page,12)
-        val all=store.exercises()
-        val active=store.activePhase()
-        val chosen=active?.let {store.planEntries(plan,it.id).map {pair->pair.first.id}.toSet()} ?: emptySet()
-        for(category in (Store.CATEGORIES+all.map {it.category}).distinct()) {
-            val exercises=all.filter {it.category==category}
-            if(exercises.isEmpty())continue
-            val count=exercises.count {it.id in chosen}
-            val opened=catalogExpandedCategory==category
+        // One accordion combines plan selection and editing the exercise catalog.
+        // Both views previously exposed the same exercise selection checkboxes.
+        val selected=if(phase!=null)store.planEntries(plan,phase.id).map {it.first.id}.toSet()
+            else emptySet<Long>()
+        val all=store.exercises(includeArchived=true).filter {
+            showArchivedExercises || !it.archived || it.id in selected
+        }
+        val controls=card(page)
+        add(controls,text("Übungen für Training $plan",17f,true));gap(controls,6)
+        add(controls,text("Kategorie öffnen und Übungen mit Häkchen auswählen. Änderungen gelten für den aktuellen A/B-Plan.",12f,false,muted))
+        gap(controls,11)
+        add(controls,button("+ Eigene Übung hinzufügen"){exerciseDialog(null)})
+        gap(controls,8)
+        add(controls,button(if(showArchivedExercises)"Archivierte Übungen ausblenden" else "Archivierte Übungen anzeigen",false) {
+            showArchivedExercises=!showArchivedExercises
+            render()
+        })
+
+        val categories=(Store.CATEGORIES+all.map {it.category}).distinct()
+        for(category in categories) {
+            val options=all.filter {it.category==category}
+            if(options.isEmpty())continue
+            val chosen=options.count {it.id in selected}
+            val open=expandedCategory==category
             val box=card(page)
-            val header=row()
-            val heading=column()
-            add(heading,text(category+(if(count>0)" ($count)" else ""),15f,true))
-            add(heading,text(if(opened)"Zum Schließen antippen" else "Zum Anzeigen antippen",
-                11f,false,muted))
-            header.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
-            add(header,text(if(opened)"⌃" else "⌄",21f,true,accent),24)
-            header.setPadding(dp(2),dp(4),dp(2),dp(4))
-            header.setOnClickListener {
-                catalogExpandedCategory=if(opened)null else category
+            add(box,button(category+(if(chosen>0)" ($chosen)" else "")+
+                (if(open)"  ▴" else "  ▾"),false) {
+                expandedCategory=if(open)null else category
                 render()
-            }
-            add(box,header)
-            if(opened) {
-                gap(box,9)
-                for(ex in exercises) {
-                    val inner=column()
-                    if(active!=null) {
-                        val check=CheckBox(this).apply {
-                            text=ex.name
+            })
+            if(open) {
+                gap(box,7)
+                for(exercise in options) {
+                    val entry=column()
+                    if(phase!=null && !exercise.archived) {
+                        val checkbox=CheckBox(this).apply {
+                            text=exercise.name
                             textSize=14f
-                            isChecked=ex.id in chosen
+                            isChecked=exercise.id in selected
                             setOnCheckedChangeListener {_,checked->
                                 try {
-                                    if(checked)store.addToPlan(plan,ex.id,active.id)
-                                    else store.removeFromPlan(plan,ex.id,active.id)
+                                    if(checked)store.addToPlan(plan,exercise.id,phase.id)
+                                    else store.removeFromPlan(plan,exercise.id,phase.id)
                                     render()
-                                } catch(e:Exception) {info(e.message ?: "Auswahl nicht möglich.")}
+                                } catch(e:Exception){info(e.message ?: "Auswahl fehlgeschlagen.")}
                             }
                         }
-                        add(inner,check)
-                    } else add(inner,text(ex.name,14f,true))
-                    add(inner,text((if(ex.kind=="time")"Sekunden" else "Wiederholungen")+
-                        " · "+ex.equipment,11f,false,muted))
-                    gap(inner,5)
-                    add(inner,button("Übung bearbeiten",false){exerciseDialog(ex)})
-                    add(box,inner)
+                        add(entry,checkbox)
+                    } else {
+                        add(entry,text(exercise.name+(if(exercise.archived)" (archiviert)" else ""),14f,true))
+                        if(exercise.id in selected) {
+                            add(entry,text("Im bisherigen Plan enthalten. Zum Entfernen Übung reaktivieren.",11f,false,muted))
+                        }
+                    }
+                    add(entry,text((if(exercise.kind=="time")"Haltedauer in Sekunden" else "Wiederholungen")+
+                        (if(exercise.equipment.isBlank())"" else " · "+exercise.equipment),11f,false,muted))
+                    gap(entry,5)
+                    add(entry,button("Übung bearbeiten",false){exerciseDialog(exercise)})
+                    add(box,entry)
                     gap(box,10)
                 }
+            }
+        }
+        if(phase!=null) {
+            val stats=card(page)
+            add(stats,text("Training "+plan+": "+selected.size+" Übungen gewählt",15f,true))
+            gap(stats,7)
+            add(stats,text("Übungen und Kategorien lassen sich oben hinzufügen oder bearbeiten.",12f,false,muted))
+            gap(stats,10)
+            add(stats,button("Training $plan beginnen"){askCardio()})
+            gap(page,8)
+            add(page,button("Neue Trainingsphase",false){createPhaseDialog()})
+            gap(page,8)
+            add(page,button("Trainingsphase abschließen",false){finishPhaseDialog(phase)})
+            if(store.planEntries("A",phase.id).isNotEmpty() ||
+                store.planEntries("B",phase.id).isNotEmpty()) {
+                gap(page,8)
+                add(page,button("A/B-Pläne vollständig leeren",false) {
+                    if(draft!=null) {info("Bitte laufendes Training zuerst abschließen.");return@button}
+                    AlertDialog.Builder(this).setTitle("Trainingspläne wirklich leeren?")
+                        .setMessage("Alle ausgewählten Übungen dieser Trainingsphase aus A und B entfernen? Bereits absolvierte Einheiten und frühere Phasen bleiben erhalten.")
+                        .setNegativeButton("Abbrechen",null)
+                        .setPositiveButton("Pläne leeren"){_,_->
+                            try{
+                                store.clearCurrentPlans(phase.id)
+                                expandedCategory=null
+                                render()
+                                info("A und B sind jetzt leer.")
+                            }catch(e:Exception){info(e.message ?: "Leeren fehlgeschlagen.")}
+                        }.show()
+                })
             }
         }
     }
