@@ -17,6 +17,8 @@ import androidx.core.content.FileProvider;
 import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
+import java.util.Date;
+import java.text.SimpleDateFormat;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,6 +39,7 @@ public final class UpdateManager implements AutoCloseable {
     private final String installedName;
     private volatile boolean closed=false;
     private boolean resumed=false,checking=false,manualRequested=false,downloading=false;
+    private long lastAutoAttemptElapsed=Long.MIN_VALUE;
     private ReleaseCatalog pendingCatalog;
     private boolean pendingManual;
     private ReleaseCatalog.Release permissionRelease,approvedDownload,verifiedRelease;
@@ -66,9 +69,28 @@ public final class UpdateManager implements AutoCloseable {
     private boolean automatic(){return prefs.getBoolean(AUTO,true);}
     private boolean all(){return prefs.getBoolean(ALL,true);}
     private String skipKey(boolean include){return include?"skipped_all":"skipped_stable";}
-    public void startAutomaticCheck(){if(automatic())check(false);}
+    public void startAutomaticCheck(){onForegroundAutomaticCheck();}
     public void checkNow(){check(true);}
-    public void onResume(){resumed=true;schedule();}
+    public void onResume(){
+        resumed=true;
+        schedule();
+        // onCreate is not called again when Android simply resumes an existing
+        // Activity. Check on foreground entry too, with a small rate-limit
+        // guard so returning from settings or file pickers does not spam GitHub.
+        onForegroundAutomaticCheck();
+    }
+    private void onForegroundAutomaticCheck(){
+        if(!automatic()||closed)return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(lastAutoAttemptElapsed!=Long.MIN_VALUE &&
+            now-lastAutoAttemptElapsed<60_000L)return;
+        lastAutoAttemptElapsed=now;
+        check(false);
+    }
+    private void recordStatus(String value){
+        prefs.edit().putString("last_status",value)
+            .putLong("last_status_at",System.currentTimeMillis()).apply();
+    }
     public void onPause(){resumed=false;main.removeCallbacks(present);}
     public void onWindowFocus(){schedule();}
     public void onPermissionReturn(){
@@ -100,6 +122,7 @@ public final class UpdateManager implements AutoCloseable {
         manualRequested |= manual;
         if(checking) return;
         pendingCatalog=null;checking=true;
+        recordStatus("Suche nach GitHub-Releases läuft …");
         if(manual)toast("Suche nach Updates …");
         worker.execute(()->{
             try{
@@ -107,14 +130,17 @@ public final class UpdateManager implements AutoCloseable {
                 main.post(()->{
                     if(closed)return;
                     checking=false;pendingManual=manualRequested;manualRequested=false;
+                    recordStatus("GitHub-Releases geladen; Versionsvergleich läuft.");
                     pendingCatalog=result;schedule();
                 });
             }catch(Exception error){
+                String reason=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
                 main.post(()->{
                     if(closed)return;
                     checking=false;
                     boolean notify=manualRequested;manualRequested=false;
-                    if(notify)toast("Updateprüfung nicht möglich. Internetverbindung prüfen.");
+                    recordStatus("Updateprüfung fehlgeschlagen: "+reason);
+                    if(notify)toast("Updateprüfung fehlgeschlagen: "+reason);
                 });
             }
         });
@@ -140,11 +166,15 @@ public final class UpdateManager implements AutoCloseable {
         int skipped=prefs.getInt(skipKey(includePre),-1);
         ReleaseCatalog.Release release=result.choose(installed,installedCode,includePre,skipped,manual);
         if(release==null){
-            if(manual)toast(includePre?
-                "Keine neuere Version verfügbar.":
-                "Kein neueres stabiles Release verfügbar.");
+            String message=includePre?
+                "Kein neueres Release oder Pre-Release verfügbar.":
+                "Kein neueres stabiles Release verfügbar.";
+            recordStatus(message+" Installiert: "+installedName+" (Build "+installedCode+").");
+            if(manual)toast(message);
             return;
         }
+        recordStatus("Update gefunden: "+release.version+" (Build "+release.versionCode+
+            (release.prerelease?", Pre-Release":", Release")+").");
         showOffer(release,includePre);
     }
     private int dp(int n){return Math.round(n*activity.getResources().getDisplayMetrics().density);}
@@ -196,6 +226,11 @@ public final class UpdateManager implements AutoCloseable {
             prefs.edit().putBoolean(ALL,id==both.getId()).apply());
         content.addView(channels);
         content.addView(text("Pre-Releases sind Testversionen. Eine manuelle Prüfung bietet auch übersprungene Updates wieder an.",12));
+        long checked=prefs.getLong("last_status_at",0L);
+        String when=checked>0?new SimpleDateFormat("dd.MM.yyyy HH:mm:ss",Locale.GERMANY)
+            .format(new Date(checked)):"Noch keine Prüfung";
+        content.addView(text("Letzte Updatesuche: "+when,12));
+        content.addView(text("Status: "+prefs.getString("last_status","Noch keine Prüfung durchgeführt."),12));
         content.addView(text("Es werden nur öffentliche GitHub-Release-Daten abgefragt – keine Trainingsdaten übertragen.",12));
         ScrollView scroll=new ScrollView(activity);scroll.addView(content);
         show(new AlertDialog.Builder(activity).setTitle("Software-Updates")
