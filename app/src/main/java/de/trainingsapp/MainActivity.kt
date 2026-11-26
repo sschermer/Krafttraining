@@ -1208,6 +1208,12 @@ class MainActivity : Activity() {
             ?: "Noch keine Messungen gespeichert.",15f))
         gap(summary,10)
         add(summary,button("+ Körpergewicht eintragen") {weightDialog()})
+        gap(summary,8)
+        add(summary,button("Messwerte bearbeiten / löschen (${all.size})",false) {
+            manageBodyWeights()
+        })
+        gap(summary,5)
+        add(summary,text("Alle Einträge verwalten – unabhängig vom Zeitraum des Diagramms.",12f,false,muted))
         gap(page,5)
 
         val ranges=listOf(7 to "7 T",30 to "30 T",90 to "90 T",365 to "1 Jahr",0 to "Alle")
@@ -1238,29 +1244,73 @@ class MainActivity : Activity() {
             formatNumber(delta)+" kg",13f,false,muted))
         gap(page,3)
         add(page,TrendChartView(filtered.map {Pair(it.timestamp,it.kg)},"kg"),-1,250)
-        gap(page,10)
-        add(page,text("Messwerte · neueste zuerst",16f,true));gap(page,8)
-        for(w in filtered.asReversed()) {
-            val c=card(page)
-            val r=row()
-            val values=column()
-            add(values,text(formatNumber(w.kg)+" kg",15f,true))
-            add(values,text(date(w.timestamp),12f,false,muted))
-            r.addView(values,LinearLayout.LayoutParams(0,-2,1f))
-            add(r,button("Ändern",false){weightDialog(w)},86)
-            add(r,View(this),6,1)
-            add(r,button("Löschen",false){
-                AlertDialog.Builder(this).setTitle("Messung löschen?")
-                    .setMessage(date(w.timestamp)+" · "+formatNumber(w.kg)+" kg")
-                    .setNegativeButton("Abbrechen",null)
-                    .setPositiveButton("Löschen"){_,_->store.deleteBodyWeight(w.id);render()}
-                    .show()
-            },85)
-            add(c,r)
-        }
     }
 
-    private fun weightDialog(existing:BodyWeight?=null) {
+    /**
+     * Edit/delete all stored weights independently from graph date filter.
+     */
+    private fun manageBodyWeights() {
+        val entries=store.bodyWeights().asReversed()
+        if(entries.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("Messwerte verwalten")
+                .setMessage("Es sind noch keine Gewichtsmessungen gespeichert.")
+                .setNegativeButton("Schließen",null)
+                .setPositiveButton("Messung erfassen"){_,_->weightDialog()}
+                .show()
+            return
+        }
+        val content=column().apply {setPadding(dp(14),dp(10),dp(14),dp(12))}
+        add(content,text("Alle ${entries.size} Messungen – neueste zuerst",14f,true))
+        gap(content,7)
+        add(content,text("Einträge korrigieren oder löschen – unabhängig vom Diagrammzeitraum.",12f,false,muted))
+        gap(content,8)
+        val scroll=ScrollView(this).apply {addView(content)}
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("Körpergewicht verwalten")
+            .setView(scroll)
+            .setNegativeButton("Schließen",null)
+            .create()
+        for(entry in entries) {
+            val entryCard=card(content)
+            add(entryCard,text(formatNumber(entry.kg)+" kg",16f,true))
+            add(entryCard,text(date(entry.timestamp),12f,false,muted))
+            gap(entryCard,7)
+            val actions=row()
+            actions.addView(button("Bearbeiten",false) {
+                dialog.dismiss()
+                weightDialog(entry,true)
+            },LinearLayout.LayoutParams(0,dp(45),1f))
+            add(actions,View(this),8,1)
+            actions.addView(button("Löschen",false) {
+                dialog.dismiss()
+                confirmBodyWeightDelete(entry)
+            },LinearLayout.LayoutParams(0,dp(45),1f))
+            add(entryCard,actions)
+            gap(content,8)
+        }
+        dialog.show()
+    }
+
+    private fun confirmBodyWeightDelete(entry:BodyWeight) {
+        AlertDialog.Builder(this)
+            .setTitle("Gewichtsmessung löschen?")
+            .setMessage(date(entry.timestamp)+" · "+formatNumber(entry.kg)+
+                " kg\n\nNur dieser Eintrag wird dauerhaft gelöscht. Andere Messungen und Trainings bleiben erhalten.")
+            .setNegativeButton("Abbrechen"){_,_->manageBodyWeights()}
+            .setPositiveButton("Löschen"){_,_->
+                try {
+                    store.deleteBodyWeight(entry.id)
+                    render()
+                    info("Gewichtsmessung gelöscht.")
+                    manageBodyWeights()
+                } catch(e:Exception) {
+                    info(e.message ?: "Löschen fehlgeschlagen.")
+                }
+            }
+            .show()
+    }
+
+    private fun weightDialog(existing:BodyWeight?=null,returnToList:Boolean=false) {
         val box=column().apply {setPadding(dp(22),dp(8),dp(22),0)}
         add(box,text("Körpergewicht in kg",13f,true))
         val input=edit(existing?.kg?.let {formatNumber(it)} ?: "","z. B. 82,4",true)
@@ -1278,7 +1328,9 @@ class MainActivity : Activity() {
         add(box,text("Datum und Uhrzeit sind frei wählbar, auch rückwirkend.",12f,false,muted))
         val dialog=AlertDialog.Builder(this)
             .setTitle(if(existing==null)"Gewicht eintragen" else "Gewicht korrigieren")
-            .setView(box).setNegativeButton("Abbrechen",null)
+            .setView(box).setNegativeButton("Abbrechen"){_,_->
+                if(returnToList)manageBodyWeights()
+            }
             .setPositiveButton("Speichern",null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -1293,6 +1345,7 @@ class MainActivity : Activity() {
                     dialog.dismiss()
                     render()
                     info("Körpergewicht gespeichert.")
+                    if(returnToList)manageBodyWeights()
                 } catch(e:Exception) {info(e.message ?: "Speichern fehlgeschlagen.")}
             }
         }
