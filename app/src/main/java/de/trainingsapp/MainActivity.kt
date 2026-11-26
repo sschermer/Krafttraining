@@ -81,9 +81,14 @@ class MainActivity : Activity() {
                 rows.put(JSONObject()
                     .put("weight",set.weight).put("reps",set.reps)
                     .put("seconds",set.seconds).put("rir",set.rir)
-                    .put("completed",set.completed))
+                    .put("completed",set.completed).put("note",set.note))
             }
-            entries.put(JSONObject().put("exerciseId",entry.exercise.id).put("sets",rows))
+            entries.put(JSONObject()
+                .put("exerciseId",entry.exercise.id)
+                .put("sets",rows)
+                .put("replacedById",entry.replacedById ?: JSONObject.NULL)
+                .put("replacementReason",entry.replacementReason)
+                .put("replacementForId",entry.replacementForId ?: JSONObject.NULL))
         }
         root.put("entries",entries)
         workPrefs().edit().putString("active",root.toString()).apply()
@@ -105,10 +110,17 @@ class MainActivity : Activity() {
                     sets.add(SetDraft(
                         row.optString("weight"),row.optString("reps"),
                         row.optString("seconds"),row.optString("rir"),
-                        row.optBoolean("completed",false)
+                        row.optBoolean("completed",false),
+                        row.optString("note","")
                     ))
                 }
-                if(sets.isNotEmpty()) restored.add(ExerciseDraft(exercise,sets))
+                if(sets.isNotEmpty()) {
+                    restored.add(ExerciseDraft(exercise,sets,
+                        if(item.isNull("replacedById"))null else item.optLong("replacedById").takeIf {it>0L},
+                        item.optString("replacementReason",""),
+                        if(item.isNull("replacementForId"))null else item.optLong("replacementForId").takeIf {it>0L}
+                    ))
+                }
             }
             if(restored.isNotEmpty()) {
                 activePlan=root.optString("plan","A").takeIf {it in listOf("A","B")} ?: "A"
@@ -872,7 +884,8 @@ class MainActivity : Activity() {
         val body=entries.joinToString("\n") {
             "Satz ${it.number}: "+(if(ex.kind=="time")"${it.seconds ?: 0}s"
             else "${it.weight?.let {w->formatNumber(w)} ?: "–"} kg / ${it.reps ?: 0} Wdh.")+
-                (it.rir?.let {r->" · RIR "+formatNumber(r)} ?: "")
+                (it.rir?.let {r->" · RIR "+formatNumber(r)} ?: "")+
+                (if(it.note.isBlank())"" else "\nBemerkung: "+it.note)
         }
         AlertDialog.Builder(this).setTitle(ex.name+" · "+date(s.timestamp))
             .setMessage(body.ifBlank{"Keine Sätze"})
@@ -894,7 +907,7 @@ class MainActivity : Activity() {
                     set.reps?.toString() ?: "",
                     set.seconds?.toString() ?: "",
                     set.rir?.let {formatNumber(it)} ?: "",
-                    true
+                    true,set.note
                 )
             }.toMutableList())
         }.toMutableList()
