@@ -21,6 +21,14 @@ final class GithubUpdates {
     private GithubUpdates(){}
     interface Cancellation { boolean cancelled(); }
     interface Progress { void changed(int percent); }
+    static final class QueryBackoffException extends IOException {
+        final long retryAfterMillis;
+        QueryBackoffException(int status,long retryAfterMillis){
+            super(status==429?"GitHub begrenzt die Updatesuche (HTTP 429).":
+                "GitHub begrenzt die Updatesuche oder verweigert den Zugriff (HTTP 403).");
+            this.retryAfterMillis=retryAfterMillis;
+        }
+    }
 
     static ReleaseCatalog query(Cancellation cancel) throws Exception {
         ReleaseCatalog catalog=new ReleaseCatalog();
@@ -33,7 +41,10 @@ final class GithubUpdates {
                 conn.setRequestProperty("Accept","application/vnd.github+json");
                 conn.setRequestProperty("X-GitHub-Api-Version","2026-03-10");
                 int code=conn.getResponseCode();
-                if(code==403||code==429)throw new IOException("GitHub-Abfragelimit oder Zugriffsbeschränkung. Später erneut versuchen.");
+                if(code==403||code==429)throw new QueryBackoffException(code,
+                    UpdateCheckPolicy.serverDelayMillis(conn.getHeaderField("Retry-After"),
+                        conn.getHeaderField("X-RateLimit-Remaining"),
+                        conn.getHeaderField("X-RateLimit-Reset"),System.currentTimeMillis()));
                 if(code!=200)throw new IOException("GitHub antwortet mit HTTP "+code+".");
                 ByteArrayOutputStream out=new ByteArrayOutputStream();
                 try(InputStream in=conn.getInputStream()){
@@ -54,6 +65,7 @@ final class GithubUpdates {
 
     static void download(ReleaseCatalog.Release release, File target,
                          Cancellation cancel,Progress progress) throws Exception {
+        requireDigest(release.digest);
         URL url=new URL(release.downloadUrl);
         if(!allowedDownload(url)||!"github.com".equals(url.getHost()))
             throw new IOException("Ungültige Downloadadresse.");
@@ -87,6 +99,7 @@ final class GithubUpdates {
 
     static void copyVerified(InputStream in,OutputStream out,long size,String expectedDigest,
             Cancellation cancel,Progress progress,long deadline) throws Exception {
+        requireDigest(expectedDigest);
         if(size<=0||size>ReleaseCatalog.MAX_APK_BYTES)throw new IOException("Ungültige APK-Dateigröße.");
         MessageDigest sha=MessageDigest.getInstance("SHA-256");
         byte[] buffer=new byte[32*1024];long total=0;int previous=-1;
@@ -100,9 +113,14 @@ final class GithubUpdates {
         check(cancel,deadline);
         if(total!=size)throw new IOException("APK-Download unvollständig.");
         String actual="sha256:"+hex(sha.digest());
-        if(!expectedDigest.isEmpty()&&!actual.equalsIgnoreCase(expectedDigest))
+        if(!actual.equalsIgnoreCase(expectedDigest))
             throw new IOException("SHA-256-Prüfsumme stimmt nicht überein.");
         out.flush();
+    }
+
+    private static void requireDigest(String digest)throws IOException{
+        if(!ReleaseCatalog.validDigest(digest))
+            throw new IOException("Die SHA-256-Prüfsumme auf GitHub fehlt oder ist ungültig.");
     }
 
     static String hex(byte[] bytes){

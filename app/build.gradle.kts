@@ -3,44 +3,57 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Release key material is loaded from protected GitHub Actions secrets.
-// Never commit the keystore or its password.
-val signingStorePath = System.getenv("ANDROID_KEYSTORE_PATH")
-val signingPassword = System.getenv("ANDROID_SIGNING_PASSWORD")
-val hasReleaseSigning = !signingStorePath.isNullOrBlank() && !signingPassword.isNullOrBlank()
+// Every Gradle release build is unsigned. A fresh CI job signs the reviewed artifact
+// with Android SDK tools; Gradle/plugins never receive the private key.
+val robolectricSdk by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+val prepareRobolectricSdk by tasks.registering(Sync::class) {
+    from(robolectricSdk)
+    into(layout.buildDirectory.dir("robolectric-sdk"))
+}
 
 android {
     namespace = "de.trainingsapp"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
     defaultConfig {
         applicationId = "de.trainingsapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = System.getenv("BUILD_VERSION_CODE")?.toIntOrNull() ?: 2
-        versionName = "0.5.5"
-    }
-    if (hasReleaseSigning) {
-        signingConfigs {
-            create("permanentRelease") {
-                storeFile = file(signingStorePath!!)
-                storePassword = signingPassword!!
-                keyAlias = "trainingsapp"
-                keyPassword = signingPassword
-                storeType = "pkcs12"
-            }
-        }
+        versionCode = providers.environmentVariable("BUILD_VERSION_CODE").orNull?.toIntOrNull() ?: 68
+        versionName = providers.gradleProperty("trainingsappVersionName").get()
     }
     buildTypes {
         release {
             isMinifyEnabled = false
-            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("permanentRelease")
+            isDebuggable = false
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.dependsOn(prepareRobolectricSdk)
+            // Runtime SDK jars are normal verified/locked Gradle inputs.
+            // Robolectric must not download executable jars behind that gate.
+            it.systemProperty("robolectric.offline", "true")
+            it.systemProperty("robolectric.dependency.dir", layout.buildDirectory.dir("robolectric-sdk").get().asFile.absolutePath)
+        }
+    }
+}
+
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+}
+
+dependencyLocking {
+    lockAllConfigurations()
+    lockMode.set(org.gradle.api.artifacts.dsl.LockMode.STRICT)
 }
 
 // Needed to provide the verified private APK to Android\'s installer.
@@ -49,4 +62,6 @@ dependencies {
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.18")
+    robolectricSdk("org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
 }

@@ -70,6 +70,21 @@ public final class ReleaseCatalog {
     }
     public Release choose(Version installed,int installedCode,boolean includePrerelease,
                           int skippedCode,boolean manual) {
+        Release candidate=eligible(installed,installedCode,includePrerelease,skippedCode,manual);
+        return candidate!=null&&validDigest(candidate.digest)?candidate:null;
+    }
+    public String validationProblem(Version installed,int installedCode,boolean includePrerelease,
+                                    int skippedCode,boolean manual){
+        Release candidate=eligible(installed,installedCode,includePrerelease,skippedCode,manual);
+        if(candidate==null||validDigest(candidate.digest))return null;
+        return "Update "+candidate.version+" (Build "+candidate.versionCode+
+            ") wird nicht angeboten: Die SHA-256-Prüfsumme auf GitHub fehlt oder ist ungültig.";
+    }
+    static boolean validDigest(String digest){
+        return digest!=null&&digest.matches("sha256:[a-fA-F0-9]{64}");
+    }
+    private Release eligible(Version installed,int installedCode,boolean includePrerelease,
+                             int skippedCode,boolean manual){
         Release candidate=includePrerelease?newest:stable;
         if(installed==null||candidate==null||
             candidate.version.compareTo(installed)<0||
@@ -105,7 +120,9 @@ public final class ReleaseCatalog {
         long size=asset.optLong("size",-1);
         if(size<=0||size>MAX_APK_BYTES)return null;
         String digest=asset.optString("digest","");
-        if(!digest.isEmpty()&&!digest.matches("sha256:[a-fA-F0-9]{64}"))return null;
+        // Keep incomplete candidates internally so the user sees the actual
+        // verification problem instead of a misleading "no update" result.
+        // choose() never exposes a candidate without a valid SHA-256 digest.
         String body=entry.optString("body","");
         if(body.length()>5000)body=body.substring(0,5000)+"\n…";
         return new Release(version,build,tag,entry.optBoolean("prerelease"),

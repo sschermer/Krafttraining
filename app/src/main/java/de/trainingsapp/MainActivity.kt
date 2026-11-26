@@ -40,8 +40,9 @@ class MainActivity : Activity() {
     private var workoutCardio=false
     private var workoutCardioType=""
     private var workoutCardioMinutes=0
-    private var exportType="xlsx"
-    private var exportWorkoutId:Long?=null
+    private var pendingExport:ExportRequest?=null
+    private var importTask:BackupImportTask?=null
+    private var activityResumed=false
     private var viewingPhaseId:Long?=null
     private var activePhaseId:Long=1L
     private var workoutTimestamp:Long=System.currentTimeMillis()
@@ -61,9 +62,20 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store=Store(this)
         updates=UpdateManager(this)
-        viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
-        restoreDraft()
-        render()
+        pendingExport=ExportRequest.restore(savedInstanceState)
+        @Suppress("DEPRECATION")
+        val retained=lastNonConfigurationInstance as? BackupImportTask
+        importTask=retained
+        if(retained!=null) {
+            showImportProgress()
+            observeImport(retained)
+        } else {
+            viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
+            restoreDraft()
+            render()
+            if(savedInstanceState?.getBoolean("backup_import_running")==true)
+                info("Bitte prüfe den Datenstand. Falls die Wiederherstellung unterbrochen wurde, starte sie erneut.")
+        }
         // The updater checks from onResume, including warm starts where
         // Android reuses this Activity and onCreate is never called.
     }
@@ -74,6 +86,7 @@ class MainActivity : Activity() {
         val active=draft ?: return
         val root=JSONObject()
             .put("plan",activePlan)
+            .put("dataGeneration",store.dataGeneration())
             .put("phaseId",activePhaseId)
             .put("trainingDate",workoutTimestamp)
             .put("cardio",workoutCardio)
@@ -104,6 +117,10 @@ class MainActivity : Activity() {
         val stored=workPrefs().getString("active",null) ?: return
         try {
             val root=JSONObject(stored)
+            if(root.optString("dataGeneration","0")!=store.dataGeneration()) {
+                workPrefs().edit().remove("active").commit()
+                return
+            }
             val entries=root.getJSONArray("entries")
             val restored=mutableListOf<ExerciseDraft>()
             for(i in 0 until entries.length()) {
@@ -151,21 +168,33 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume()
-        if(::updates.isInitialized)updates.onResume()
+        activityResumed=true
+        if(importTask==null && ::updates.isInitialized)updates.onResume()
     }
     override fun onWindowFocusChanged(hasFocus:Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if(hasFocus && ::updates.isInitialized)updates.onWindowFocus()
+        if(hasFocus && importTask==null && ::updates.isInitialized)updates.onWindowFocus()
     }
     override fun onPause() {
-        saveDraft()
+        activityResumed=false
+        if(importTask==null)saveDraft()
         if(::updates.isInitialized)updates.onPause()
         super.onPause()
     }
     override fun onDestroy() {
+        importTask?.detach()
+        if(!isChangingConfigurations)importTask?.cancel()
         if(::updates.isInitialized)updates.close()
+        if(::store.isInitialized)store.close()
         super.onDestroy()
     }
+    override fun onSaveInstanceState(outState:Bundle) {
+        pendingExport?.save(outState)
+        outState.putBoolean("backup_import_running",importTask!=null)
+        super.onSaveInstanceState(outState)
+    }
+    @Deprecated("Retains only an import task without Activity references")
+    override fun onRetainNonConfigurationInstance():Any? = importTask
     private fun dp(n:Int):Int=(n*resources.displayMetrics.density+0.5f).toInt()
     private fun shape(color:Int,radius:Int=14,stroke:Int?=null):GradientDrawable =
         GradientDrawable().apply {
@@ -1396,7 +1425,11 @@ class MainActivity : Activity() {
     private fun copyToClipboard(label:String,content:String) {
         val manager=getSystemService(android.content.Context.CLIPBOARD_SERVICE)
             as android.content.ClipboardManager
-        manager.setPrimaryClip(android.content.ClipData.newPlainText(label,content))
+        val clip=android.content.ClipData.newPlainText(label,content)
+        clip.description.extras=android.os.PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE",true)
+        }
+        manager.setPrimaryClip(clip)
         info("Trainingsdaten als Text in die Zwischenablage kopiert.")
     }
 
@@ -1424,12 +1457,17 @@ class MainActivity : Activity() {
         saveFile("workout_json","application/json",DataExport.workoutFilename(store,sessionId),sessionId)
     }
     private fun saveFile(format:String,mime:String,name:String,sessionId:Long?=null) {
-        exportType=format
-        exportWorkoutId=sessionId
-        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE);type=mime
-            putExtra(Intent.EXTRA_TITLE,name)
-        },501)
+        if(pendingExport!=null) {info("Ein Export läuft bereits.");return}
+        try {
+            pendingExport=ExportRequest(format,sessionId)
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE);type=mime
+                putExtra(Intent.EXTRA_TITLE,name)
+            },501)
+        } catch(e:Exception) {
+            pendingExport=null
+            fileError(e.message)
+        }
     }
     @Deprecated("Used for Android Storage Access Framework compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
@@ -1438,35 +1476,79 @@ class MainActivity : Activity() {
             updates.onPermissionReturn()
             return
         }
-        if(resultCode!=RESULT_OK || data?.data==null)return
+        if(requestCode!=501 && requestCode!=502)return
+        val export=if(requestCode==501)pendingExport.also {pendingExport=null} else null
+        if(resultCode!=RESULT_OK)return
         try {
-            val uri=data.data!!
+            val uri=data?.data ?: error("Die Dateiauswahl wurde nicht abgeschlossen.")
+            require(uri.scheme=="content") {"Bitte wähle eine Datei über die Android-Dateiauswahl."}
             if(requestCode==501) {
-                val bytes=when(exportType) {
+                val request=export ?: error("Der Exportauftrag fehlt. Bitte starte den gewünschten Export erneut.")
+                val bytes=when(request.format) {
                     "xlsx"->DataExport.xlsx(store)
                     "csv"->DataExport.csv(store)
                     "workout_json"->DataExport.workoutJson(store,
-                        exportWorkoutId ?: error("Trainingseinheit fehlt."))
-                    else->store.backupJson().toByteArray(Charsets.UTF_8)
+                        request.workoutId ?: error("Trainingseinheit fehlt."))
+                    "json"->store.backupJson().toByteArray(Charsets.UTF_8)
+                    else->error("Unbekanntes Exportformat.")
                 }
-                val output=contentResolver.openOutputStream(uri) ?: error("Datei konnte nicht geöffnet werden.")
+                val output=contentResolver.openOutputStream(uri,"wt") ?: error("Datei konnte nicht geöffnet werden.")
                 output.use {it.write(bytes)}
                 info("Datei gespeichert.")
             } else if(requestCode==502) {
-                val backup=contentResolver.openInputStream(uri)?.bufferedReader()?.use {it.readText()}
-                    ?: error("Datei nicht lesbar")
-                store.restoreJson(backup);clearDraft();tab="Start";render()
-                info("Datensicherung wiederhergestellt.")
+                check(importTask==null) {"Eine Wiederherstellung läuft bereits."}
+                saveDraft()
+                val task=BackupImportTask(applicationContext,uri)
+                importTask=task
+                showImportProgress()
+                observeImport(task)
+                task.start()
             }
         } catch(e:Exception) {
-            AlertDialog.Builder(this).setTitle("Dateifehler")
-                .setMessage(e.message ?: "Der Vorgang konnte nicht abgeschlossen werden.")
-                .setPositiveButton("OK",null).show()
+            fileError(e.message)
+        }
+    }
+
+    private fun fileError(message:String?) {
+        AlertDialog.Builder(this).setTitle("Dateifehler")
+            .setMessage(message ?: "Der Vorgang konnte nicht abgeschlossen werden.")
+            .setPositiveButton("OK",null).show()
+    }
+
+    private fun showImportProgress() {
+        root=column().apply {setPadding(dp(20),dp(30),dp(20),dp(20));setBackgroundColor(light)}
+        page=root
+        add(root,text("Sicherung wiederherstellen",22f,true))
+        gap(root,14)
+        add(root,ProgressBar(this))
+        gap(root,14)
+        add(root,text("Die Datei wird geprüft. Gültige Daten werden anschließend vollständig übernommen.",15f))
+        gap(root,14)
+        add(root,button("Abbrechen",false){importTask?.cancel()})
+        setContentView(root)
+    }
+
+    private fun observeImport(task:BackupImportTask) {
+        task.attach { result ->
+            if(importTask===task && !isFinishing && !isDestroyed) {
+                task.detach()
+                importTask=null
+                draft=null
+                if(result.error==null) {
+                    clearDraft()
+                    tab="Start"
+                    viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
+                } else restoreDraft()
+                render()
+                if(result.error==null)info("Datensicherung wiederhergestellt.") else fileError(result.error)
+                if(activityResumed && ::updates.isInitialized)updates.onResume()
+            }
         }
     }
 
     @Deprecated("Android back callback")
     override fun onBackPressed() {
+        if(importTask!=null) {info("Die Wiederherstellung läuft. Mit „Abbrechen“ kannst du sie beenden.");return}
         if(draft!=null && tab=="Training") {
             AlertDialog.Builder(this).setTitle("Training läuft")
                 .setMessage("Zur Startseite wechseln? Die aktuellen Eingaben bleiben erhalten.")

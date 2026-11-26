@@ -2,6 +2,8 @@
 
 Native Android-App (Kotlin) zur lokalen Erfassung von Krafttraining.
 
+Aktueller Stand: **0.5.6 – abgesicherte Exporte, Wiederherstellung und Update-Builds**.
+
 ## Version 0.1 – erster Implementierungsstand
 
 - 43 vorinstallierte Übungen in 8 Kategorien (inklusive Wandsitz, Plank und Side Plank)
@@ -19,13 +21,15 @@ Native Android-App (Kotlin) zur lokalen Erfassung von Krafttraining.
 
 ## Android-Build
 
-Voraussetzungen: Android SDK (API 35), JDK 17, Gradle 8.7.
+Voraussetzungen: Android SDK (API 35, Build Tools 35.0.0) und JDK 17. Der eingecheckte Gradle-Wrapper verwendet **Gradle 8.14.8**; CI verwendet **Temurin 17.0.21.1+2**. Android Gradle Plugin und Kotlin sind ebenfalls auf feste Versionen gesetzt.
 
 ```sh
-gradle :app:assembleDebug
+./gradlew --dependency-verification strict :app:testDebugUnitTest :app:lintRelease :app:assembleDebug
 ```
 
-GitHub Actions baut bei jedem Push auf `main` eine Debug-APK und stellt sie als herunterladbares Workflow-Artefakt bereit: **Actions → Android APK → letzter erfolgreicher Lauf → Artifacts**. Eine Debug-APK kann für Tests installiert werden, ist aber noch kein dauerhaft signiertes Release. Release-Signierung darf niemals im öffentlichen Repository abgelegt werden.
+GitHub Actions prüft Pull Requests und jeden Push auf `main` mit Unit- und Robolectric-Tests, Android Lint und APK-Builds. Die Gradle-Verifikation prüft die eingecheckten SHA-256-Werte der Abhängigkeiten; Lockdateien fixieren ihre aufgelösten Versionen. Auch der Wrapper und seine Gradle-Distribution besitzen feste Prüfsummen. Abhängigkeitsänderungen müssen zusammen mit ihren Lockdateien und geprüften Verifikationswerten überprüft werden.
+
+Debug-APKs und Testberichte liegen unter **Actions → Android APK → letzter Lauf → Artifacts**. Auf `main` wird außerdem die geprüfte Release-APK mit dem dauerhaften Schlüssel signiert und als Pre-Release veröffentlicht. Eine Debug-APK verwendet einen anderen Schlüssel und ist kein Update für die signierte App.
 
 ## Daten und Einschränkungen
 
@@ -61,9 +65,9 @@ In GitHub (am Laptop im Browser):
 4. Unter `Actions → Android APK → Run workflow → Run workflow` einen neuen Build starten.
 5. Nach erfolgreicher Signaturprüfung erscheint eine aktualisierbare APK unter `Releases`.
 
-Die Signierkonfiguration liest den Keystore ausschließlich über GitHub Actions Secrets.
-Bei fehlenden Secrets baut der Workflow nur eine Debug-APK und veröffentlicht **keine**
-als signiert bezeichnete Release-APK.
+Der Buildjob erhält keine Signiergeheimnisse und führt Gradle ausschließlich mit Leserechten für das Repository aus. Ein separater Signierjob auf einem frischen Runner übernimmt genau das geprüfte APK-Artefakt, kontrolliert dessen Prüfsumme, Paket, Version und Berechtigungen und signiert es mit Android-SDK-Werkzeugen. Dort werden weder Projektcode noch Gradle ausgeführt. Der temporäre Keystore wird auch bei Fehlern entfernt. Erst ein dritter Job erhält Schreibrechte für die Veröffentlichung.
+
+Bei fehlenden Signiergeheimnissen schlägt der Signierschritt fehl und es wird keine Release-APK veröffentlicht. Die unabhängig erzeugte Debug-APK bleibt als Testartefakt verfügbar.
 
 Der SHA-256-Zertifikatsfingerabdruck ist im Workflow hinterlegt. Signaturen, die
 nicht diesem privaten Schlüssel entsprechen, werden nicht veröffentlicht.
@@ -94,6 +98,8 @@ nicht mehr möglich.
 - Test-Builds (Debug): unabhängig von den Secrets
 - Signierter Build: nur auf `main` nach Einrichtung der Secrets
 - `apksigner verify` und Prüfung des Zertifikats vor der Veröffentlichung
+- Fest auf Commit-SHAs gesetzte GitHub Actions und getrennte Rechte für Build, Signatur und Veröffentlichung
+- SHA-256-Prüfsumme und `release.json` mit Commit, Workflow-Lauf und Versionscode bei jeder neuen Veröffentlichung
 - Neue signierte Testversionen unter GitHub Releases, nicht nur Actions-Artefakten
 
 ## Version 0.2.0 – Datenintegrität und Bedienung
@@ -177,7 +183,7 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - SQLite-Schema 3 führt `training_sets.note` und `exercise_swaps` ein; bestehende Daten bleiben erhalten. Vollständige Datensicherungen verwenden Version 3, ältere Versionen 1 und 2 bleiben importierbar.
 - **Software-Updates**: automatischer Check bei App-Start, manuelle Suche auf der Startseite und in „Daten“. Update-Kanal: nur stabile Releases oder auch Pre-Releases (Standard). Popup unterscheidet beide und zeigt Version, Build, Größe und Neuerungen.
 - Aktionen: „Aktualisieren“, „Später“, „Überspringen“. Übersprungene Updates erscheinen wieder bei manueller Suche.
-- Updates werden ausschließlich nach Zustimmung heruntergeladen; HTTPS-Hostliste, Größenlimit, optionale SHA-256-Prüfsumme sowie APK-Paketname, Versionscode und Signaturfingerabdruck werden geprüft. Danach Übergabe an den Android-Installer, ohne stilles Installieren.
+- Updates werden ausschließlich nach Zustimmung heruntergeladen; HTTPS-Hostliste, Größenlimit, SHA-256-Prüfsumme (seit 0.5.6 verpflichtend) sowie APK-Paketname, Versionscode und Signaturfingerabdruck werden geprüft. Danach Übergabe an den Android-Installer, ohne stilles Installieren.
 - Die GitHub-Releasetags werden nach Version **und Buildnummer** verglichen, da auch spätere Builds derselben Version eine höhere Android-`versionCode` besitzen.
 
 
@@ -219,3 +225,14 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - **Löschen** fragt mit Datum und konkretem Gewichtswert nach einer Bestätigung. Dabei wird ausschließlich die ausgewählte Messung aus der SQLite-Datenbank entfernt. Alle übrigen Gewichts- und Trainingsdaten bleiben erhalten.
 - Gewichtskurve, Verlauf, Kennzahlen, JSON-/CSV-/Excel-Export und die Zwischenablage-Auswertung verwenden den aktuellen Datenbankstand und werden nach Änderungen neu dargestellt.
 - Das Datenbankschema bleibt unverändert. Die Version wird als signiertes Pre-Release für den Update-Test veröffentlicht.
+
+## Version 0.5.6 – Sicherheits- und Stabilitätskorrekturen
+
+- **Dateiexporte:** Format und ausgewählte Trainingseinheit werden über Activity-Neuerstellung und gespeicherten Prozesszustand hinweg erhalten. Fehlt der Auftrag, wird der Export abgebrochen. Ein verlorener Einzeltraining-Auftrag kann dadurch keine vollständige Sicherung auslösen.
+- **JSON-Wiederherstellung:** Dateigröße (maximal 32 MiB), UTF-8, Schema, Typen, Wertebereiche, eindeutige IDs und Datenverknüpfungen werden vor dem Ersetzen geprüft. Gültige Sicherungen der Versionen 1, 2 und 3 bleiben unterstützt. Der Import läuft im Hintergrund und lässt sich abbrechen. Datenbankfehler und Abbrüche vor dem Commit rollen die gesamte Änderung zurück.
+- **Unterbrochene Trainings:** Eine erfolgreiche Wiederherstellung erhält innerhalb derselben Datenbanktransaktion eine neue lokale Kennung. Ein alter Trainingsentwurf kann sich auch nach einem Prozessabbruch nicht mit zufällig gleichen IDs an den wiederhergestellten Datenbestand anhängen. Die Kennung enthält keine Trainingsdaten und wird nicht exportiert.
+- **CSV und Zwischenablage:** Potenzielle Tabellenformeln in Textfeldern werden beim CSV-Export neutralisiert; numerische Werte bleiben Zahlen. Kopierte Trainingsdaten tragen die Android-Markierung für sensible Zwischenablage-Inhalte.
+- **Updates:** Erfolgreiche automatische Suchen haben mindestens 15 Minuten Abstand. Fehler führen zu gestaffelten Wartezeiten; ausdrückliche GitHub-Serverlimits gelten auch für manuelle Anfragen. Manuelle Suchen können den normalen Abstand umgehen. Eine gültige SHA-256-Prüfsumme ist vor dem Anbieten und Installieren eines Updates erforderlich; fehlt sie, wird eine konkrete Meldung angezeigt.
+- **Build und Signatur:** Aktualisierte Buildwerkzeuge, feste Action-Commits, Abhängigkeitsverifikation und getrennte Build-, Signier- und Veröffentlichungsjobs. App-ID und bisheriges Signierzertifikat bleiben erhalten. Die neue signierte APK wird als Pre-Release bereitgestellt.
+
+Diese Korrekturen beseitigen konkrete technische Befunde. Ob Google Play Protect eine APK künftig ohne Warnung akzeptiert, lässt sich daraus nicht zusichern.

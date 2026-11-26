@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class UpdateManager implements AutoCloseable {
     public static final int PERMISSION_REQUEST=753;
     private static final String AUTO="auto_check", ALL="include_prerelease";
+    private static final String LAST_SUCCESS="last_successful_check_at",
+        AUTO_RETRY="automatic_retry_at", SERVER_RETRY="server_retry_at", FAILURES="failed_checks";
     private final Activity activity;
     private final SharedPreferences prefs;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -43,6 +45,9 @@ public final class UpdateManager implements AutoCloseable {
     private boolean resumed=false,checking=false,manualRequested=false,downloading=false;
     private ReleaseCatalog pendingCatalog;
     private boolean pendingManual;
+    private String pendingNotice="";
+    private ReleaseCatalog cachedCatalog;
+    private long cachedAt;
     private ReleaseCatalog.Release permissionRelease,approvedDownload,verifiedRelease;
     private File verifiedApk;
     private AtomicBoolean cancelDownload;
@@ -95,13 +100,15 @@ public final class UpdateManager implements AutoCloseable {
         onForegroundAutomaticCheck();
     }
     private void onForegroundAutomaticCheck(){
-        // Each return to the foreground counts as an app start. Rely on the
-        // in-flight guard in check() to avoid concurrent GitHub queries.
+        // Foreground entries reuse recent results and respect retry deadlines.
         if(automatic()&&!closed)check(false);
     }
     private void recordStatus(String value){
         prefs.edit().putString("last_status",value)
             .putLong("last_status_at",System.currentTimeMillis()).apply();
+    }
+    private String time(long when){
+        return new SimpleDateFormat("dd.MM.yyyy HH:mm:ss",Locale.GERMANY).format(new Date(when));
     }
     public void onPause(){resumed=false;main.removeCallbacks(present);}
     public void onWindowFocus(){schedule();}
@@ -133,9 +140,25 @@ public final class UpdateManager implements AutoCloseable {
             finishCheckCallbacks();
             return;
         }
-        manualRequested |= manual;
-        if(checking) return;
-        pendingCatalog=null;checking=true;
+        if(checking){manualRequested|=manual;return;}
+        long now=System.currentTimeMillis();
+        long wait=UpdateCheckPolicy.waitMillis(manual,now,prefs.getLong(LAST_SUCCESS,0),
+            prefs.getLong(AUTO_RETRY,0),prefs.getLong(SERVER_RETRY,0));
+        if(wait>0){
+            if(manual){
+                String notice="Die Updatesuche pausiert nach einer GitHub-Zugriffsbeschränkung bis "+time(now+wait)+".";
+                if(cachedCatalog!=null&&UpdateCheckPolicy.cacheFresh(cachedAt,now)){
+                    pendingCatalog=cachedCatalog;pendingManual=true;
+                    pendingNotice=notice+" Angezeigt wird der Stand vom "+time(cachedAt)+".";
+                    schedule();
+                }else{
+                    recordStatus(notice);toast(notice);
+                }
+            }
+            finishCheckCallbacks();return;
+        }
+        manualRequested=manual;
+        pendingCatalog=null;pendingNotice="";checking=true;
         recordStatus("Suche nach GitHub-Releases läuft …");
         if(manual)toast("Suche nach Updates …");
         worker.execute(()->{
@@ -144,8 +167,11 @@ public final class UpdateManager implements AutoCloseable {
                 main.post(()->{
                     if(closed)return;
                     checking=false;pendingManual=manualRequested;manualRequested=false;
+                    cachedCatalog=result;cachedAt=System.currentTimeMillis();
+                    prefs.edit().putLong(LAST_SUCCESS,cachedAt).putLong(AUTO_RETRY,0)
+                        .putLong(SERVER_RETRY,0).putInt(FAILURES,0).apply();
                     recordStatus("GitHub-Releases geladen; Versionsvergleich läuft.");
-                    pendingCatalog=result;schedule();
+                    pendingCatalog=result;pendingNotice="";schedule();
                     finishCheckCallbacks();
                 });
             }catch(Exception error){
@@ -154,8 +180,17 @@ public final class UpdateManager implements AutoCloseable {
                     if(closed)return;
                     checking=false;
                     boolean notify=manualRequested;manualRequested=false;
-                    recordStatus("Updateprüfung fehlgeschlagen: "+reason);
-                    if(notify)toast("Updateprüfung fehlgeschlagen: "+reason);
+                    long failedAt=System.currentTimeMillis();
+                    int failures=UpdateCheckPolicy.nextFailureCount(prefs.getInt(FAILURES,0));
+                    long serverWait=error instanceof GithubUpdates.QueryBackoffException?
+                        ((GithubUpdates.QueryBackoffException)error).retryAfterMillis:0;
+                    long retryAt=failedAt+Math.max(serverWait,UpdateCheckPolicy.failureDelayMillis(failures));
+                    prefs.edit().putInt(FAILURES,failures).putLong(AUTO_RETRY,retryAt)
+                        .putLong(SERVER_RETRY,serverWait>0?failedAt+serverWait:0).apply();
+                    String message="Updateprüfung fehlgeschlagen: "+reason+
+                        " Nächste automatische Suche frühestens ab "+time(retryAt)+".";
+                    recordStatus(message);
+                    if(notify)toast(message);
                     finishCheckCallbacks();
                 });
             }
@@ -177,21 +212,29 @@ public final class UpdateManager implements AutoCloseable {
         if(downloading||permissionRelease!=null||pendingCatalog==null)return;
         ReleaseCatalog result=pendingCatalog;pendingCatalog=null;
         boolean manual=pendingManual;pendingManual=false;
+        String notice=pendingNotice;pendingNotice="";
         if(!manual&&!automatic())return;
         boolean includePre=all();
         int skipped=prefs.getInt(skipKey(includePre),-1);
+        String problem=result.validationProblem(installed,installedCode,includePre,skipped,manual);
+        if(problem!=null){
+            recordStatus(problem+(notice.isEmpty()?"":" "+notice));
+            if(manual)toast(problem+(notice.isEmpty()?"":" "+notice));
+            return;
+        }
         ReleaseCatalog.Release release=result.choose(installed,installedCode,includePre,skipped,manual);
         if(release==null){
             String message=includePre?
                 "Kein neueres Release oder Pre-Release verfügbar.":
                 "Kein neueres stabiles Release verfügbar.";
-            recordStatus(message+" Installiert: "+installedName+" (Build "+installedCode+").");
-            if(manual)toast(message);
+            recordStatus(message+" Installiert: "+installedName+" (Build "+installedCode+")."+
+                (notice.isEmpty()?"":" "+notice));
+            if(manual)toast(message+(notice.isEmpty()?"":" "+notice));
             return;
         }
         recordStatus("Update gefunden: "+release.version+" (Build "+release.versionCode+
-            (release.prerelease?", Pre-Release":", Release")+").");
-        showOffer(release,includePre);
+            (release.prerelease?", Pre-Release":", Release")+")."+(notice.isEmpty()?"":" "+notice));
+        showOffer(release,includePre,notice);
     }
     private int dp(int n){return Math.round(n*activity.getResources().getDisplayMetrics().density);}
     private TextView text(String value,int size){
@@ -228,6 +271,7 @@ public final class UpdateManager implements AutoCloseable {
         automaticCheck.setOnCheckedChangeListener((button,on)->
             prefs.edit().putBoolean(AUTO,on).apply());
         content.addView(automaticCheck);
+        content.addView(text("Erfolgreiche Suchergebnisse gelten 15 Minuten. „Jetzt prüfen“ sucht erneut; Wartezeiten von GitHub werden dabei berücksichtigt.",12));
         content.addView(text("Update-Kanal",15));
         RadioGroup channels=new RadioGroup(activity);
         channels.setOrientation(RadioGroup.VERTICAL);
@@ -255,8 +299,9 @@ public final class UpdateManager implements AutoCloseable {
             .setNegativeButton("Schließen",null)
             .create());
     }
-    private void showOffer(ReleaseCatalog.Release release,boolean includePre){
+    private void showOffer(ReleaseCatalog.Release release,boolean includePre,String notice){
         LinearLayout content=box();
+        if(!notice.isEmpty())content.addView(text(notice,12));
         content.addView(text(release.prerelease?"PRE-RELEASE · ENTWICKLUNGSVERSION":"STABILES RELEASE",16));
         content.addView(text("Version "+release.version+" · Build "+release.versionCode,20));
         content.addView(text("Installiert: "+installedName+" · Build "+installedCode+
@@ -319,7 +364,7 @@ public final class UpdateManager implements AutoCloseable {
         progress=new ProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
         content.addView(progress,new LinearLayout.LayoutParams(-1,dp(20)));
-        content.addView(text("Dateigröße, SHA-256 (sofern vorhanden), App-ID, Version und Signatur werden geprüft.",12));
+        content.addView(text("Dateigröße, SHA-256, App-ID, Version und Signatur werden geprüft.",12));
         AlertDialog loading=new AlertDialog.Builder(activity).setTitle("Update wird geladen")
             .setView(content)
             .setNegativeButton("Abbrechen",(d,w)->cancelled.set(true))
@@ -408,7 +453,8 @@ public final class UpdateManager implements AutoCloseable {
         if(cancelDownload!=null)cancelDownload.set(true);
         if(currentDialog!=null){currentDialog.dismiss();currentDialog=null;}
         if(verifiedApk!=null){verifiedApk.delete();verifiedApk=null;}
-        permissionRelease=null;approvedDownload=null;pendingCatalog=null;
+        permissionRelease=null;approvedDownload=null;pendingCatalog=null;cachedCatalog=null;
+        pendingNotice="";
         checkCallbacks.clear();
         worker.shutdownNow();
     }
