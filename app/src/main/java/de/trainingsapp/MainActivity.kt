@@ -455,6 +455,94 @@ class MainActivity : Activity() {
             }.show()
     }
 
+    private fun noteDialog(set:SetDraft,onSaved:()->Unit) {
+        val input=EditText(this).apply {
+            setText(set.note)
+            hint="Bemerkung (optional), z. B. Schmerzen, Technik, Tagesform"
+            inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            minLines=3;maxLines=8
+            setSingleLine(false)
+            setPadding(dp(16),dp(10),dp(16),dp(10))
+        }
+        AlertDialog.Builder(this).setTitle("Satzbemerkung")
+            .setView(input)
+            .setNegativeButton("Abbrechen",null)
+            .setNeutralButton("Löschen"){_,_->
+                set.note=""
+                onSaved()
+            }
+            .setPositiveButton("Übernehmen"){_,_->
+                set.note=input.text.toString().trim()
+                onSaved()
+            }.show()
+    }
+
+    private fun replaceExerciseDialog(entry:ExerciseDraft) {
+        val current=draft ?: return
+        if(entry.replacedById!=null) return
+        val existing=current.map {it.exercise.id}.toSet()
+        val options=store.exercises().filter {it.id !in existing}
+        if(options.isEmpty()) {
+            info("Keine andere Übung im Katalog verfügbar.")
+            return
+        }
+        val box=column().apply {setPadding(dp(16),dp(10),dp(16),dp(10))}
+        val intro=text("Ersatz für "+entry.exercise.name+
+            ". Die bisher bestätigten Sätze bleiben erhalten. Der A/B-Plan ändert sich nicht.",
+            13f,false,muted)
+        add(box,intro);gap(box,10)
+        val holder=column()
+        add(box,holder)
+        var opened:String?=null
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("Übung ersetzen").setView(ScrollView(this).apply {addView(box)})
+            .setNegativeButton("Abbrechen",null).create()
+        fun choose(exercise:Exercise) {
+            val reason=edit("","Grund (optional, z. B. Schmerzen)")
+            val container=column().apply {setPadding(dp(18),dp(8),dp(18),dp(8))}
+            add(container,text("Neue Übung: "+exercise.name,15f,true));gap(container,12)
+            add(container,reason)
+            AlertDialog.Builder(this).setTitle("Austausch bestätigen")
+                .setView(container)
+                .setNegativeButton("Zurück",null)
+                .setPositiveButton("Ersetzen"){_,_->
+                    val pending=entry.sets.count {!it.completed}.coerceAtLeast(1)
+                    val replacement=ExerciseDraft(exercise,
+                        MutableList(pending){SetDraft()},
+                        replacementForId=entry.exercise.id)
+                    entry.replacedById=exercise.id
+                    entry.replacementReason=reason.text.toString().trim()
+                    val index=current.indexOf(entry)
+                    current.add(index+1,replacement)
+                    saveDraft()
+                    dialog.dismiss()
+                    render()
+                }.show()
+        }
+        fun populate() {
+            holder.removeAllViews()
+            for(category in (Store.CATEGORIES+options.map {it.category}).distinct()) {
+                val candidates=options.filter {it.category==category}
+                if(candidates.isEmpty())continue
+                val openedNow=opened==category
+                add(holder,button(category+(if(openedNow)"  ▴" else "  ▾"),false){
+                    opened=if(openedNow)null else category
+                    populate()
+                })
+                if(openedNow) {
+                    for(ex in candidates) {
+                        gap(holder,3)
+                        add(holder,button(ex.name,false){choose(ex)})
+                    }
+                }
+                gap(holder,7)
+            }
+        }
+        populate()
+        dialog.show()
+    }
+
     private fun workout() {
         title("Training $activePlan","Vorwerte sind Vorschläge: Erledigte Sätze bitte mit ✓ bestätigen.")
         val dateCard=card(page)
