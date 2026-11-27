@@ -2,7 +2,7 @@
 
 Native Android-App (Kotlin) zur lokalen Erfassung von Krafttraining.
 
-Aktueller Stand: **0.5.6 – abgesicherte Exporte, Wiederherstellung und Update-Builds**.
+Aktueller Stand: **0.5.7 – Kategorieauswahl bei eigenen Übungen**.
 
 ## Version 0.1 – erster Implementierungsstand
 
@@ -236,3 +236,10 @@ Versionsfolge: signierte APKs verwenden unverändert `de.trainingsapp` und dense
 - **Build und Signatur:** Aktualisierte Buildwerkzeuge, feste Action-Commits, Abhängigkeitsverifikation und getrennte Build-, Signier- und Veröffentlichungsjobs. App-ID und bisheriges Signierzertifikat bleiben erhalten. Die neue signierte APK wird als Pre-Release bereitgestellt.
 
 Diese Korrekturen beseitigen konkrete technische Befunde. Ob Google Play Protect eine APK künftig ohne Warnung akzeptiert, lässt sich daraus nicht zusichern.
+
+## Version 0.5.7 – Kategorieauswahl beim Anlegen und Bearbeiten von Übungen
+
+- Im Übungsdialog lassen sich alle vorhandenen Standard- und eigenen Kategorien direkt auswählen. Auch Kategorien mit ausschließlich archivierten Übungen bleiben verfügbar.
+- Über **+ Neue Kategorie anlegen** erscheint ein zusätzliches Eingabefeld. Ein neuer Kategoriename wird gemeinsam mit der Übung gespeichert; leere Namen werden abgelehnt. Bereits vorhandene Kategorien werden bei gleicher Schreibweise (unabhängig von Groß-/Kleinschreibung) wiederverwendet.
+- Beim Anlegen ist die Kategorie bewusst auszuwählen; beim Bearbeiten ist die bisherige Kategorie vorausgewählt.
+- Datenbankschema, bestehende Pläne, Trainingshistorie und Sicherungsformate bleiben unverändert. Die bestehende CI baut, prüft und signiert die APK für das Update.

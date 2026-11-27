@@ -890,15 +890,35 @@ class MainActivity : Activity() {
 
     private fun exerciseDialog(old:Exercise?) {
         val box=column().apply {setPadding(dp(20),dp(5),dp(20),0)}
-        add(box,text("Übungsname",13f,true));val name=edit(old?.name ?: "","Name");add(box,name)
-        gap(box,9);add(box,text("Kategorie (auch neue Namen möglich)",13f,true))
-        val cat=AutoCompleteTextView(this).apply {
-            setText(old?.category ?: Store.CATEGORIES[0]);textSize=15f
-            setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,
-                (Store.CATEGORIES+store.exercises().map {it.category}).distinct()))
-            threshold=1
+        add(box,text("Übungsname",13f,true))
+        val name=edit(old?.name ?: "","Name").apply {tag="exercise_name"}
+        add(box,name)
+        gap(box,9);add(box,text("Kategorie",13f,true))
+        // Include custom categories even if all their exercises are archived.
+        val categories=(Store.CATEGORIES+store.exercises(includeArchived=true).map {it.category}).distinct()
+        val categoryOptions=listOf("Kategorie auswählen …")+categories+"+ Neue Kategorie anlegen"
+        val newCategoryIndex=categoryOptions.lastIndex
+        val cat=Spinner(this,Spinner.MODE_DIALOG).apply {
+            tag="exercise_category"
+            prompt="Kategorie auswählen"
+            adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_item,categoryOptions).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            setSelection(old?.let {categories.indexOf(it.category)+1} ?: 0)
         }
         add(box,cat)
+        val newCategory=edit("","Name der neuen Kategorie").apply {tag="exercise_new_category"}
+        val newCategoryBox=column().apply {visibility=View.GONE}
+        gap(newCategoryBox,7)
+        add(newCategoryBox,text("Neue Kategorie",13f,true))
+        add(newCategoryBox,newCategory)
+        add(box,newCategoryBox)
+        cat.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent:AdapterView<*>?) {newCategoryBox.visibility=View.GONE}
+            override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long) {
+                newCategoryBox.visibility=if(position==newCategoryIndex)View.VISIBLE else View.GONE
+            }
+        }
         gap(box,9)
         add(box,text("Art der Übung",13f,true))
         val kinds=listOf("Wiederholungen","Haltedauer (Sekunden)")
@@ -922,17 +942,36 @@ class MainActivity : Activity() {
             add(box,archived)
             add(box,text("Archivieren löscht keine bisherigen Trainingsdaten oder gespeicherten Pläne.",12f,false,muted))
         }
+        val scroll=ScrollView(this).apply {addView(box)}
         val dialog=AlertDialog.Builder(this).setTitle(if(old==null)"Neue Übung" else "Übung bearbeiten")
-            .setView(box).setNegativeButton("Abbrechen",null)
+            .setView(scroll).setNegativeButton("Abbrechen",null)
             .setPositiveButton("Speichern",null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val n=name.text.toString().trim();val catName=cat.text.toString().trim()
-                if(n.isBlank() || catName.isBlank()) {info("Name und Kategorie sind erforderlich.");return@setOnClickListener}
-                store.upsertExercise(Exercise(old?.id ?: 0L,n,catName,
-                    if(kind.selectedItemPosition==1)"time" else "reps",
-                    eq.text.toString().trim(),perSide.isChecked,archived.isChecked))
-                dialog.dismiss();render()
+                val n=name.text.toString().trim()
+                if(n.isBlank()) {name.error="Übungsname eingeben";return@setOnClickListener}
+                val position=cat.selectedItemPosition
+                val catName=when {
+                    position in 1..categories.size -> categories[position-1]
+                    position==newCategoryIndex -> {
+                        val entered=newCategory.text.toString().trim()
+                        if(entered.isBlank()) {
+                            newCategory.error="Kategorienamen eingeben"
+                            return@setOnClickListener
+                        }
+                        categories.firstOrNull {it.equals(entered,ignoreCase=true)} ?: entered
+                    }
+                    else -> {
+                        info("Bitte eine Kategorie auswählen oder eine neue anlegen.")
+                        return@setOnClickListener
+                    }
+                }
+                try {
+                    store.upsertExercise(Exercise(old?.id ?: 0L,n,catName,
+                        if(kind.selectedItemPosition==1)"time" else "reps",
+                        eq.text.toString().trim(),perSide.isChecked,archived.isChecked))
+                    dialog.dismiss();render()
+                } catch(e:Exception) {info(e.message ?: "Übung konnte nicht gespeichert werden.")}
             }
         }
         dialog.show()
