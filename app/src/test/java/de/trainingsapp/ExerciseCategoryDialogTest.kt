@@ -3,6 +3,7 @@ package de.trainingsapp
 import android.app.AlertDialog
 import android.app.Application
 import android.content.Context
+import android.os.Looper
 import android.widget.EditText
 import android.widget.Spinner
 import org.junit.After
@@ -13,6 +14,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowAlertDialog
@@ -41,6 +43,7 @@ class ExerciseCategoryDialogTest {
         val method = MainActivity::class.java.getDeclaredMethod("exerciseDialog", Exercise::class.java)
         method.isAccessible = true
         method.invoke(controller.get(), old)
+        shadowOf(Looper.getMainLooper()).idle()
         return ShadowAlertDialog.getLatestAlertDialog()
     }
 
@@ -51,6 +54,8 @@ class ExerciseCategoryDialogTest {
         val spinner = category(dialog)
         val position = (0 until spinner.count).first { spinner.getItemAtPosition(it).toString() == label }
         spinner.setSelection(position)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(label, spinner.selectedItem.toString())
     }
 
     private fun name(dialog: AlertDialog, value: String) {
@@ -62,7 +67,8 @@ class ExerciseCategoryDialogTest {
     }
 
     private fun save(dialog: AlertDialog) {
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        assertTrue(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     private fun saved(name: String): Exercise? = Store(app).use { store ->

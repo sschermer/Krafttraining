@@ -946,35 +946,33 @@ class MainActivity : Activity() {
         val dialog=AlertDialog.Builder(this).setTitle(if(old==null)"Neue Übung" else "Übung bearbeiten")
             .setView(scroll).setNegativeButton("Abbrechen",null)
             .setPositiveButton("Speichern",null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val n=name.text.toString().trim()
-                if(n.isBlank()) {name.error="Übungsname eingeben";return@setOnClickListener}
-                val position=cat.selectedItemPosition
-                val catName=when {
-                    position in 1..categories.size -> categories[position-1]
-                    position==newCategoryIndex -> {
-                        val entered=newCategory.text.toString().trim()
-                        if(entered.isBlank()) {
-                            newCategory.error="Kategorienamen eingeben"
-                            return@setOnClickListener
-                        }
-                        categories.firstOrNull {it.equals(entered,ignoreCase=true)} ?: entered
-                    }
-                    else -> {
-                        info("Bitte eine Kategorie auswählen oder eine neue anlegen.")
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val n=name.text.toString().trim()
+            if(n.isBlank()) {name.error="Übungsname eingeben";return@setOnClickListener}
+            val position=cat.selectedItemPosition
+            val catName=when {
+                position in 1..categories.size -> categories[position-1]
+                position==newCategoryIndex -> {
+                    val entered=newCategory.text.toString().trim()
+                    if(entered.isBlank()) {
+                        newCategory.error="Kategorienamen eingeben"
                         return@setOnClickListener
                     }
+                    categories.firstOrNull {it.equals(entered,ignoreCase=true)} ?: entered
                 }
-                try {
-                    store.upsertExercise(Exercise(old?.id ?: 0L,n,catName,
-                        if(kind.selectedItemPosition==1)"time" else "reps",
-                        eq.text.toString().trim(),perSide.isChecked,archived.isChecked))
-                    dialog.dismiss();render()
-                } catch(e:Exception) {info(e.message ?: "Übung konnte nicht gespeichert werden.")}
+                else -> {
+                    info("Bitte eine Kategorie auswählen oder eine neue anlegen.")
+                    return@setOnClickListener
+                }
             }
+            try {
+                store.upsertExercise(Exercise(old?.id ?: 0L,n,catName,
+                    if(kind.selectedItemPosition==1)"time" else "reps",
+                    eq.text.toString().trim(),perSide.isChecked,archived.isChecked))
+                dialog.dismiss();render()
+            } catch(e:Exception) {info(e.message ?: "Übung konnte nicht gespeichert werden.")}
         }
-        dialog.show()
     }
 
     private fun results() {
