@@ -243,6 +243,48 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
             put("position",planEntries(plan,phaseId).size);put("target_sets",2);put("phase_id",phaseId)
         })
     }
+    /** Replace a plan in one transaction, only after the editor's explicit Save.
+     * The current legacy storage still accepts A/B only; the v4 migration will
+     * replace this restriction with stable plan identities.
+     */
+    fun savePlanEntries(plan:String, phaseId:Long, entries:List<Pair<Long,Int>>) {
+        require(plan in listOf("A","B")) { "Unbekannter Trainingsplan." }
+        require(entries.map { it.first }.distinct().size == entries.size) { "Doppelte Übung." }
+        require(entries.all { it.second in 1..BackupValidation.MAX_TARGET_SETS }) { "Ungültige Satzanzahl." }
+        require(entries.sumOf { it.second.coerceAtLeast(2) } <= 1000) { "Zu viele Sätze." }
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            require(activePhase()?.id==phaseId) { "Abgeschlossene Trainingsphasen sind schreibgeschützt." }
+            val existing=planEntries(plan,phaseId).map { it.first.id }.toSet()
+            for ((id,_) in entries) {
+                val ex=exercise(id) ?: error("Übung nicht gefunden.")
+                require(!ex.archived || id in existing) { "Archivierte Übung." }
+            }
+            db.delete("plans","plan=? AND phase_id=?",arrayOf(plan,phaseId.toString()))
+            entries.forEachIndexed { position, (id, count) ->
+                db.insertOrThrow("plans",null,ContentValues().apply {
+                    put("plan",plan);put("phase_id",phaseId);put("exercise_id",id)
+                    put("position",position);put("target_sets",count)
+                })
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    /** Most recent recorded values of this exercise in the selected plan and phase.
+     * Strict timestamp bound prevents future workouts leaking into backdated drafts.
+     */
+    fun previousPlanSets(exerciseId:Long, plan:String, phaseId:Long, before:Long):List<TrainingSet> {
+        val id=query("""SELECT t.session_id FROM training_sets t
+            JOIN sessions s ON s.id=t.session_id
+            WHERE t.exercise_id=? AND s.plan=? AND s.phase_id=? AND s.timestamp<?
+            ORDER BY s.timestamp DESC,s.id DESC LIMIT 1""",
+            arrayOf(exerciseId.toString(),plan,phaseId.toString(),before.toString())) { it.getLong(0) }
+            .firstOrNull() ?: return emptyList()
+        return sets(id).filter { it.exerciseId==exerciseId }.sortedBy { it.number }
+    }
+
     fun removeFromPlan(plan:String,exerciseId:Long,phaseId:Long=activePhase()?.id ?: 1L) {
         require(activePhase()?.id==phaseId) { "Abgeschlossene Trainingsphasen sind schreibgeschützt." }
         writableDatabase.delete("plans","plan=? AND exercise_id=? AND phase_id=?",
@@ -348,7 +390,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
     }
     fun newDraft(plan:String,phaseId:Long=activePhase()?.id ?: 1L):MutableList<ExerciseDraft> = planEntries(plan,phaseId).map { (exercise, count) ->
         val previous=recentSets(exercise.id)
-        val rows=(0 until count.coerceIn(2,BackupValidation.MAX_TARGET_SETS)).map { i ->
+        val rows=(0 until count.coerceIn(1,BackupValidation.MAX_TARGET_SETS)).map { i ->
             val last=previous.getOrNull(i)
             SetDraft(
                 last?.weight?.let { formatNumber(it) } ?: "",
