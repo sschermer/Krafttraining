@@ -37,7 +37,7 @@ data class ExerciseDraft(val exercise:Exercise,val sets:MutableList<SetDraft>,
     var replacedById:Long?=null,var replacementReason:String="",var replacementForId:Long?=null,
     var setNumberOffset:Int=0)
 
-class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3) {
+class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4) {
     companion object {
         val CATEGORIES = listOf(
             "Beine – kniedominant", "Hüfte & hintere Muskelkette",
@@ -134,6 +134,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         // Existing installations retain their saved plans through upgrades.
         installPhases(db)
         installSwapNotes(db)
+        installPlanIdentities(db)
     }
 
     private fun installPhases(db: SQLiteDatabase) {
@@ -162,6 +163,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if(oldVersion < 2) installPhases(db)
         if(oldVersion < 3) installSwapNotes(db)
+        if(oldVersion < 4) installPlanIdentities(db)
     }
 
     private fun <T> query(sql: String, args: Array<String> = emptyArray(), map: (Cursor) -> T): List<T> {
@@ -224,9 +226,36 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
             if(source!=null) db.execSQL("""INSERT INTO plans(plan,exercise_id,position,target_sets,phase_id)
                 SELECT plan,exercise_id,position,target_sets,? FROM plans WHERE phase_id=?""",
                 arrayOf(id,source.id))
+            installPlanIdentities(db)
             db.setTransactionSuccessful()
             return TrainingPhase(id,name.trim(),now,null)
         } finally {db.endTransaction()}
+    }
+
+    /** Stable storage keys remain unchanged when a plan is renamed.
+     * Legacy A/B keys are preserved; new identities are UUIDs.
+     */
+    data class PlanIdentity(val key:String, val name:String)
+
+    fun planIdentities(phaseId:Long):List<PlanIdentity> =
+        query("""SELECT plan_key, name FROM plan_identities
+            WHERE phase_id=? ORDER BY position, id""",arrayOf(phaseId.toString())) {
+            PlanIdentity(it.getString(0),it.getString(1))
+        }
+
+    private fun installPlanIdentities(db:SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS plan_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phase_id INTEGER NOT NULL,
+            plan_key TEXT NOT NULL,
+            name TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            UNIQUE(phase_id,plan_key),
+            FOREIGN KEY(phase_id) REFERENCES training_phases(id))""")
+        db.execSQL("""INSERT OR IGNORE INTO plan_identities(phase_id,plan_key,name,position)
+            SELECT id,'A','Training A',0 FROM training_phases""")
+        db.execSQL("""INSERT OR IGNORE INTO plan_identities(phase_id,plan_key,name,position)
+            SELECT id,'B','Training B',1 FROM training_phases""")
     }
 
     fun planEntries(plan:String,phaseId:Long=activePhase()?.id ?: 1L):List<Pair<Exercise,Int>> =
@@ -602,6 +631,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
         val db=writableDatabase
         db.beginTransaction()
         try {
+            db.delete("plan_identities",null,null)
             for(t in TABLES.reversed()) {
                 BackupValidation.checkInterrupted()
                 db.delete(t,null,null)
@@ -625,6 +655,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 3
                     db.insertOrThrow(t,null,v)
                 }
             }
+            installPlanIdentities(db)
             // Also check when legacy inconsistencies prevented enabling FK
             // enforcement on open. Any failure still rolls back all replaced rows.
             db.rawQuery("PRAGMA foreign_key_check",null).use {
