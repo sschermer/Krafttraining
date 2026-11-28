@@ -2,7 +2,21 @@
 
 Native Android-App (Kotlin) zur lokalen Erfassung von Krafttraining.
 
-Aktueller Stand: **0.5.7 – Kategorieauswahl bei eigenen Übungen**.
+Aktueller Stand: **1.0.0 – neue Bedienoberfläche und flexible Trainingsplanung (Vorabversion)**.
+
+## Version 1.0.0
+
+- Drei Hauptbereiche: Training, Planung und Auswertung; Einstellungen separat.
+- Frei benennbare und duplizierbare Trainingspläne mit stabilen IDs, individueller Satzanzahl und explizitem Speichern.
+- Kompakte Trainingserfassung mit sichtbaren Vorwerten pro Satz, Abschlussmarkierungen, Satzbemerkungen und Übungswechseln.
+- Suchbarer Übungskatalog mit mehreren gleichzeitig geöffneten Kategorien.
+- Farbthemes Sage, Forest und Graphite.
+- Leistungsindex pro Trainingsplan und Phase (erste Einheit als Referenz, reguläre Sätze voll, Zusatzsätze zu einem Drittel, RIR nicht berücksichtigt), einschließlich Gesamtsatzanzahl. Vergleichbare Übungen werden gleich gewichtet. Ältere Einheiten ohne historisch erfasste Sollsatzanzahl verwenden eine als geschätzt gekennzeichnete Zwei-Satz-Annahme.
+- Datenbankmigration auf Schema 5; vollständiges JSON-Backup Version 4 mit Import älterer Formate 1–3.
+- Die Oberfläche bleibt in Kotlin mit nativen Android Views implementiert; es wurden keine neuen UI-Abhängigkeiten eingeführt.
+- Vor Installation der Vorabversion wird eine externe JSON-Sicherung empfohlen. Die Bedienung auf einem realen Gerät ist noch zu prüfen.
+
+Die nachstehenden älteren Versionsbeschreibungen dokumentieren den damaligen Funktionsstand.
 
 ## Version 0.1 – erster Implementierungsstand
 
