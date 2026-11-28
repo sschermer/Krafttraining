@@ -37,7 +37,7 @@ data class ExerciseDraft(val exercise:Exercise,val sets:MutableList<SetDraft>,
     var replacedById:Long?=null,var replacementReason:String="",var replacementForId:Long?=null,
     var setNumberOffset:Int=0)
 
-class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4) {
+class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5) {
     companion object {
         val CATEGORIES = listOf(
             "Beine – kniedominant", "Hüfte & hintere Muskelkette",
@@ -45,7 +45,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
             "Rumpf", "Isolationsübungen", "Beweglichkeit & Stabilität",
             "Ausdauer & Kondition"
         )
-        val TABLES = listOf("training_phases", "exercises", "plans", "sessions", "training_sets", "exercise_swaps", "body_weights")
+        val TABLES = listOf("training_phases", "exercises", "plans", "sessions", "training_sets", "exercise_swaps", "body_weights", "plan_identities", "session_plan_exercises")
     }
 
     override fun onConfigure(db:SQLiteDatabase) {
@@ -135,6 +135,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
         installPhases(db)
         installSwapNotes(db)
         installPlanIdentities(db)
+        installSessionSnapshots(db)
     }
 
     private fun installPhases(db: SQLiteDatabase) {
@@ -164,6 +165,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
         if(oldVersion < 2) installPhases(db)
         if(oldVersion < 3) installSwapNotes(db)
         if(oldVersion < 4) installPlanIdentities(db)
+        if(oldVersion < 5) installSessionSnapshots(db)
     }
 
     private fun <T> query(sql: String, args: Array<String> = emptyArray(), map: (Cursor) -> T): List<T> {
@@ -227,6 +229,12 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
                 SELECT plan,exercise_id,position,target_sets,? FROM plans WHERE phase_id=?""",
                 arrayOf(id,source.id))
             installPlanIdentities(db)
+            if(source!=null) {
+                db.delete("plan_identities","phase_id=?",arrayOf(id.toString()))
+                db.execSQL("""INSERT INTO plan_identities(phase_id,plan_key,name,position)
+                    SELECT ?,plan_key,name,position FROM plan_identities WHERE phase_id=?""",
+                    arrayOf(id,source.id))
+            }
             db.setTransactionSuccessful()
             return TrainingPhase(id,name.trim(),now,null)
         } finally {db.endTransaction()}
@@ -258,6 +266,118 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
             SELECT id,'B','Training B',1 FROM training_phases""")
     }
 
+    fun planName(plan:String,phaseId:Long):String =
+        planIdentities(phaseId).firstOrNull { it.key==plan }?.name ?: plan
+
+    fun createPlan(phaseId:Long,name:String,copyKey:String?=null):PlanIdentity {
+        val cleaned=name.trim()
+        require(cleaned.isNotEmpty() && cleaned.length<=128 && cleaned.indexOf('\u0000')<0) { "Bitte gültigen Plannamen eingeben." }
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            require(activePhase()?.id==phaseId) { "Nur die aktive Phase ist bearbeitbar." }
+            val existing=planIdentities(phaseId)
+            require(existing.none { it.name.equals(cleaned,true) }) { "Der Name ist schon vergeben." }
+            require(copyKey==null || existing.any {it.key==copyKey}) { "Vorlage nicht gefunden." }
+            val key=java.util.UUID.randomUUID().toString()
+            db.insertOrThrow("plan_identities",null,ContentValues().apply {
+                put("phase_id",phaseId);put("plan_key",key);put("name",cleaned);put("position",existing.size)
+            })
+            if(copyKey!=null) db.execSQL("""INSERT INTO plans(plan,exercise_id,position,target_sets,phase_id)
+                SELECT ?,exercise_id,position,target_sets,phase_id FROM plans WHERE phase_id=? AND plan=?""",
+                arrayOf(key,phaseId,copyKey))
+            db.setTransactionSuccessful()
+            return PlanIdentity(key,cleaned)
+        } finally { db.endTransaction() }
+    }
+
+    fun renamePlan(phaseId:Long,key:String,name:String) {
+        val cleaned=name.trim()
+        require(cleaned.isNotEmpty() && cleaned.length<=128 && cleaned.indexOf('\u0000')<0) { "Bitte gültigen Plannamen eingeben." }
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            require(activePhase()?.id==phaseId) { "Nur die aktive Phase ist bearbeitbar." }
+            require(planIdentities(phaseId).none { it.key!=key && it.name.equals(cleaned,true) }) { "Der Name ist schon vergeben." }
+            check(db.update("plan_identities",ContentValues().apply {put("name",cleaned)},
+                "phase_id=? AND plan_key=?",arrayOf(phaseId.toString(),key))==1) { "Plan nicht gefunden." }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    private fun installSessionSnapshots(db:SQLiteDatabase) {
+        // Old workouts lack reliable historical target sets. Leave snapshots
+        // empty for those workouts instead of fabricating historical plan data.
+        db.execSQL("""CREATE TABLE IF NOT EXISTS session_plan_exercises (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            exercise_id INTEGER NOT NULL,
+            target_sets INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            per_side INTEGER NOT NULL,
+            UNIQUE(session_id,exercise_id),
+            FOREIGN KEY(session_id) REFERENCES sessions(id),
+            FOREIGN KEY(exercise_id) REFERENCES exercises(id))""")
+    }
+
+    data class PlannedExercise(val id:Long,val target:Int,val kind:String,val perSide:Boolean)
+    fun sessionPlan(sessionId:Long):List<PlannedExercise> =
+        query("""SELECT exercise_id,target_sets,kind,per_side FROM session_plan_exercises
+            WHERE session_id=? ORDER BY id""",arrayOf(sessionId.toString())) {
+            PlannedExercise(it.getLong(0),it.getInt(1),it.getString(2),it.getInt(3)!=0)
+        }
+
+    data class SessionPerformance(val result:PerformanceIndex.Result,val estimated:Boolean,val referenceId:Long?)
+
+    fun performanceHistory(plan:String,phaseId:Long):Map<Long,SessionPerformance> {
+        val workouts=sessions(plan,phaseId)
+        if(workouts.isEmpty()) return emptyMap()
+        data class Snapshot(val session:TrainingSession,val rows:List<TrainingSet>,
+                            val planned:List<PlannedExercise>,val estimated:Boolean,val swapped:Set<Long>)
+        val snapshots=workouts.map { workout ->
+            val rows=sets(workout.id)
+            val actual=sessionPlan(workout.id)
+            val planned=actual.ifEmpty {
+                rows.map {it.exerciseId}.distinct().mapNotNull { id ->
+                    exercise(id)?.let { PlannedExercise(id,2,it.kind,it.perSide) }
+                }
+            }
+            val swaps=exerciseSwaps(workout.id).flatMap { listOf(it.originalExerciseId,it.replacementExerciseId) }.toSet()
+            Snapshot(workout,rows,planned,actual.isEmpty(),swaps)
+        }
+        val baseline=snapshots.first()
+        fun mode(p:PlannedExercise, rows:List<TrainingSet>):PerformanceIndex.Kind? {
+            if(p.kind=="time") return PerformanceIndex.Kind.TIME
+            if(rows.isEmpty())return null
+            if(rows.all {(it.weight ?: 0.0)>0.0}) return PerformanceIndex.Kind.WEIGHTED
+            if(rows.all {(it.weight ?: 0.0)==0.0}) return PerformanceIndex.Kind.REPS
+            return null
+        }
+        fun value(p:PlannedExercise,rows:List<TrainingSet>,kind:PerformanceIndex.Kind) =
+            PerformanceIndex.ExerciseValue(p.id,kind,p.target,rows.map {
+                PerformanceIndex.SetValue(it.number,it.weight,it.reps,it.seconds)
+            })
+        return snapshots.associate { now ->
+            val baseValues=mutableListOf<PerformanceIndex.ExerciseValue>()
+            val currentValues=mutableListOf<PerformanceIndex.ExerciseValue>()
+            for(base in baseline.planned) {
+                if(base.id in baseline.swapped || base.id in now.swapped)continue
+                val current=now.planned.firstOrNull {it.id==base.id} ?: continue
+                if(current.kind!=base.kind || current.perSide!=base.perSide || current.target!=base.target)continue
+                val beforeRows=baseline.rows.filter {it.exerciseId==base.id}
+                val afterRows=now.rows.filter {it.exerciseId==base.id}
+                val beforeKind=mode(base,beforeRows) ?: continue
+                val afterKind=if(afterRows.isEmpty())beforeKind else mode(current,afterRows) ?: continue
+                if(beforeKind!=afterKind)continue
+                baseValues.add(value(base,beforeRows,beforeKind))
+                currentValues.add(value(current,afterRows,afterKind))
+            }
+            val r=PerformanceIndex.compare(baseValues,currentValues).copy(
+                completedSets=now.rows.size,referenceExercises=baseline.planned.size)
+            now.session.id to SessionPerformance(r,baseline.estimated || now.estimated,baseline.session.id)
+        }
+    }
+
     fun planEntries(plan:String,phaseId:Long=activePhase()?.id ?: 1L):List<Pair<Exercise,Int>> =
         query("""SELECT e.id,e.name,e.category,e.kind,e.equipment,e.per_side,e.archived,p.target_sets
             FROM plans p JOIN exercises e ON e.id=p.exercise_id
@@ -277,7 +397,6 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
      * replace this restriction with stable plan identities.
      */
     fun savePlanEntries(plan:String, phaseId:Long, entries:List<Pair<Long,Int>>) {
-        require(plan in listOf("A","B")) { "Unbekannter Trainingsplan." }
         require(entries.map { it.first }.distinct().size == entries.size) { "Doppelte Übung." }
         require(entries.all { it.second in 1..BackupValidation.MAX_TARGET_SETS }) { "Ungültige Satzanzahl." }
         require(entries.sumOf { it.second.coerceAtLeast(2) } <= 1000) { "Zu viele Sätze." }
@@ -285,6 +404,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
         db.beginTransaction()
         try {
             require(activePhase()?.id==phaseId) { "Abgeschlossene Trainingsphasen sind schreibgeschützt." }
+            require(planIdentities(phaseId).any { it.key==plan }) { "Unbekannter Trainingsplan." }
             val existing=planEntries(plan,phaseId).map { it.first.id }.toSet()
             for ((id,_) in entries) {
                 val ex=exercise(id) ?: error("Übung nicht gefunden.")
@@ -417,8 +537,8 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
             arrayOf(exerciseId.toString())) { it.getLong(0) }
         return if(ids.isEmpty()) emptyList() else sets(ids[0]).filter { it.exerciseId==exerciseId }
     }
-    fun newDraft(plan:String,phaseId:Long=activePhase()?.id ?: 1L):MutableList<ExerciseDraft> = planEntries(plan,phaseId).map { (exercise, count) ->
-        val previous=recentSets(exercise.id)
+    fun newDraft(plan:String,phaseId:Long=activePhase()?.id ?: 1L,before:Long=System.currentTimeMillis()):MutableList<ExerciseDraft> = planEntries(plan,phaseId).map { (exercise, count) ->
+        val previous=previousPlanSets(exercise.id,plan,phaseId,before)
         val rows=(0 until count.coerceIn(1,BackupValidation.MAX_TARGET_SETS)).map { i ->
             val last=previous.getOrNull(i)
             SetDraft(
@@ -464,6 +584,12 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
                 put("cardio",if(cardio)1 else 0);put("cardio_type",cardioType)
                 put("cardio_minutes",cardioMinutes)
             })
+            for((exercise,target) in planEntries(plan,phaseId)) {
+                db.insertOrThrow("session_plan_exercises",null,ContentValues().apply {
+                    put("session_id",sessionId);put("exercise_id",exercise.id)
+                    put("target_sets",target);put("kind",exercise.kind);put("per_side",if(exercise.perSide)1 else 0)
+                })
+            }
             for((exercise,index,row) in confirmed) {
                 val reps=row.reps.trim().toIntOrNull()
                 val seconds=row.seconds.trim().toIntOrNull()
@@ -611,7 +737,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
         }
     }
     fun backupJson():String {
-        val root=JSONObject().put("format","TrainingsappBackup").put("version",3)
+        val root=JSONObject().put("format","TrainingsappBackup").put("version",4)
         for(t in TABLES) {
             val columns=columns(t)
             val list=JSONArray()
@@ -631,7 +757,6 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
         val db=writableDatabase
         db.beginTransaction()
         try {
-            db.delete("plan_identities",null,null)
             for(t in TABLES.reversed()) {
                 BackupValidation.checkInterrupted()
                 db.delete(t,null,null)
@@ -655,7 +780,6 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 4
                     db.insertOrThrow(t,null,v)
                 }
             }
-            installPlanIdentities(db)
             // Also check when legacy inconsistencies prevented enabling FK
             // enforcement on open. Any failure still rolls back all replaced rows.
             db.rawQuery("PRAGMA foreign_key_check",null).use {

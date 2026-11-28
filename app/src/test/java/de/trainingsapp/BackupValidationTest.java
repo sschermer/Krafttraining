@@ -32,7 +32,7 @@ public class BackupValidationTest {
     @Test public void normalizesBothHistoricalFormatsWithoutLosingRecords() throws Exception {
         for (int version : new int[]{1, 2}) {
             JSONObject valid = BackupValidation.validateAndNormalize(BackupFixtures.legacy(version).toString());
-            assertEquals(3, valid.getInt("version"));
+            assertEquals(4, valid.getInt("version"));
             assertEquals(1, row(valid, "plans").getLong("phase_id"));
             assertEquals(1, row(valid, "sessions").getLong("phase_id"));
             assertEquals("", row(valid, "training_sets").getString("note"));
@@ -109,6 +109,7 @@ public class BackupValidationTest {
     }
 
     @Test public void rejectsFutureVersionsMissingTablesAndTrailingDocuments() throws Exception {
+        rejects(BackupFixtures.complete().put("version", 5));
         rejects(BackupFixtures.complete().put("version", 4));
         JSONObject missing = BackupFixtures.complete();
         missing.remove("sessions");

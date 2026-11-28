@@ -25,7 +25,8 @@ object DataExport {
         val context=org.json.JSONObject()
             .put("id",session.id)
             .put("datum",timestampFormat.format(Date(session.timestamp)))
-            .put("plan",session.plan)
+            .put("plan",store.planName(session.plan,session.phaseId))
+            .put("planId",session.plan)
             .put("trainingsphase",phase?.name ?: "Trainingsphase "+session.phaseId)
             .put("trainingsphaseId",session.phaseId)
         val cardio=org.json.JSONObject()
@@ -97,7 +98,7 @@ object DataExport {
         val phase=store.phase(session.phaseId)
         out.append("Training-ID: ").append(session.id).append("\n")
         out.append("Trainingsdatum: ").append(date(session.timestamp)).append("\n")
-        out.append("Trainingstyp: ").append(session.plan).append("\n")
+        out.append("Trainingstyp: ").append(store.planName(session.plan,session.phaseId)).append("\n")
         out.append("Trainingsphase: ").append(phase?.name ?: "Phase "+session.phaseId)
             .append(" (ID ").append(session.phaseId).append(")\n")
         out.append("Kondition vor dem Krafttraining: ")
@@ -158,7 +159,7 @@ object DataExport {
         append("TRAININGSAPP - GESAMTE TRAININGSDATEN ZUR CHATGPT-AUSWERTUNG\n")
         append("Exportiert: ").append(date(System.currentTimeMillis())).append("\n")
         append("Dies ist ein lesbarer Bericht, keine wiederherstellbare Datensicherung.\n\n")
-        append("TRAININGSPHASEN UND A/B-PLAENE\n")
+        append("TRAININGSPHASEN UND TRAININGSPLAENE\n")
         val phases=store.phases().sortedBy { it.id }
         if(phases.isEmpty())append("Keine Trainingsphase vorhanden.\n")
         for(phase in phases) {
@@ -166,9 +167,9 @@ object DataExport {
                 .append(" | Beginn: ").append(date(phase.startedAt))
                 .append(" | Abschluss: ").append(phase.endedAt?.let {date(it)} ?: "Noch aktiv")
                 .append("\n")
-            for(plan in listOf("A","B")) {
-                append("  Trainingsplan ").append(plan).append(":\n")
-                val entries=store.planEntries(plan,phase.id)
+            for(plan in store.planIdentities(phase.id)) {
+                append("  ").append(plan.name).append(" (ID ").append(plan.key).append("):\n")
+                val entries=store.planEntries(plan.key,phase.id)
                 if(entries.isEmpty())append("    Keine Uebungen ausgewaehlt\n")
                 for((exercise,targetSets) in entries) {
                     append("    - ").append(exercise.name).append(" (ID ").append(exercise.id)
@@ -284,7 +285,7 @@ object DataExport {
     }
     fun xlsx(store:Store):ByteArray {
         val sheets=Store.TABLES.map { table(store,it) }
-        val names=listOf("Trainingsphasen","Uebungen","Trainingsplaene","Trainingseinheiten","Einzelsaetze","Uebungswechsel","Koerpergewicht")
+        val names=listOf("Trainingsphasen","Uebungen","Trainingsplaene","Trainingseinheiten","Einzelsaetze","Uebungswechsel","Koerpergewicht","PlanIdentitaeten","HistorischePlanuebungen")
         val out=ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
             fun add(path:String,content:String) {

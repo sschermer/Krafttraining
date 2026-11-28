@@ -20,7 +20,7 @@ public final class BackupValidation {
     private static final long MIN_TIMESTAMP = -2_208_988_800_000L; // 1900-01-01
     private static final long MAX_TIMESTAMP = 253_402_300_799_999L; // 9999-12-31
     private static final String[] TABLES = {"training_phases", "exercises", "plans",
-        "sessions", "training_sets", "exercise_swaps", "body_weights"};
+        "sessions", "training_sets", "exercise_swaps", "body_weights", "plan_identities", "session_plan_exercises"};
     private static final Pattern JSON_NUMBER = Pattern.compile("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?");
 
     private BackupValidation() {}
@@ -31,7 +31,7 @@ public final class BackupValidation {
         }
     }
 
-    /** Returns a complete version-3 structure; v1/v2 defaults never discard supplied data. */
+    /** Returns a complete version-4 structure; v1/v2 defaults never discard supplied data. */
     public static JSONObject validateAndNormalize(String text) throws JSONException {
         checkInterrupted();
         checkDocumentBounds(text);
@@ -41,13 +41,35 @@ public final class BackupValidation {
             "Keine gültige JSON-Sicherung.");
         JSONObject root = (JSONObject) value;
         require("TrainingsappBackup".equals(root.opt("format")), "Keine gültige Trainingsapp-Sicherung.");
-        int version = (int) integer(root, "version", 1, 3, null, "Sicherung");
+        int version = (int) integer(root, "version", 1, 4, null, "Sicherung");
         if (version == 1 && !root.has("training_phases")) {
             root.put("training_phases", new JSONArray().put(new JSONObject()
                 .put("id", 1).put("name", "Trainingsphase 1")
                 .put("started_at", System.currentTimeMillis()).put("ended_at", JSONObject.NULL)));
         }
         if (version < 3 && !root.has("exercise_swaps")) root.put("exercise_swaps", new JSONArray());
+
+        if (version < 4) {
+            require(!root.has("plan_identities") && !root.has("session_plan_exercises"),
+                "Neuere Datenfelder in älterer Sicherung.");
+            JSONArray phases = root.optJSONArray("training_phases");
+            require(phases != null && phases.length() <= MAX_TOTAL_ROWS / 2, "Ungültige Trainingsphasen.");
+            JSONArray identities = new JSONArray();
+            long nextId = 1;
+            for (int i = 0; i < phases.length(); i++) {
+                checkInterrupted();
+                JSONObject phase = phases.optJSONObject(i);
+                require(phase != null, "Ungültige Trainingsphase.");
+                long phaseId = integer(phase, "id", 1, MAX_ID, null, "training_phases");
+                for (String key : new String[]{"A", "B"}) {
+                    identities.put(new JSONObject().put("id", nextId++).put("phase_id", phaseId)
+                        .put("plan_key", key).put("name", "Training " + key)
+                        .put("position", key.equals("A") ? 0 : 1));
+                }
+            }
+            root.put("plan_identities", identities);
+            root.put("session_plan_exercises", new JSONArray());
+        }
 
         Map<String, Set<Long>> ids = new HashMap<>();
         int total = 0;
@@ -70,6 +92,15 @@ public final class BackupValidation {
             }
         }
 
+        Set<String> planKeys = new HashSet<>();
+        JSONArray identities = root.getJSONArray("plan_identities");
+        for (int i = 0; i < identities.length(); i++) {
+            checkInterrupted();
+            JSONObject row = identities.getJSONObject(i);
+            reference(row, "phase_id", ids.get("training_phases"), "plan_identities");
+            require(planKeys.add(row.getLong("phase_id") + ":" + row.getString("plan_key")),
+                "Doppelte Trainingsplan-ID.");
+        }
         Map<String, Integer> planSizes = new HashMap<>();
         JSONArray plans = root.getJSONArray("plans");
         for (int i = 0; i < plans.length(); i++) {
@@ -78,14 +109,18 @@ public final class BackupValidation {
             reference(row, "exercise_id", ids.get("exercises"), "plans");
             reference(row, "phase_id", ids.get("training_phases"), "plans");
             String key = row.getLong("phase_id") + ":" + row.getString("plan");
-            int size = planSizes.getOrDefault(key, 0) + Math.max(2, row.getInt("target_sets"));
+            require(planKeys.contains(key), "Fehlender Trainingsplan.");
+            int size = planSizes.getOrDefault(key, 0) + row.getInt("target_sets");
             require(size <= 1_000, "Ein Trainingsplan enthält zu viele vorgesehene Sätze.");
             planSizes.put(key, size);
         }
         JSONArray sessions = root.getJSONArray("sessions");
         for (int i = 0; i < sessions.length(); i++) {
             checkInterrupted();
-            reference(sessions.getJSONObject(i), "phase_id", ids.get("training_phases"), "sessions");
+            JSONObject row = sessions.getJSONObject(i);
+            reference(row, "phase_id", ids.get("training_phases"), "sessions");
+            require(planKeys.contains(row.getLong("phase_id") + ":" + row.getString("plan")),
+                "Fehlender Trainingsplan einer Trainingseinheit.");
         }
         JSONArray sets = root.getJSONArray("training_sets");
         Map<Long, Integer> sessionSizes = new HashMap<>();
@@ -107,7 +142,21 @@ public final class BackupValidation {
             reference(row, "original_exercise_id", ids.get("exercises"), "exercise_swaps");
             reference(row, "replacement_exercise_id", ids.get("exercises"), "exercise_swaps");
         }
-        root.put("version", 3);
+        JSONArray snapshots = root.getJSONArray("session_plan_exercises");
+        Set<String> snapshotKeys = new HashSet<>();
+        Map<Long, Integer> snapshotSizes = new HashMap<>();
+        for (int i = 0; i < snapshots.length(); i++) {
+            checkInterrupted();
+            JSONObject row = snapshots.getJSONObject(i);
+            reference(row, "session_id", ids.get("sessions"), "session_plan_exercises");
+            reference(row, "exercise_id", ids.get("exercises"), "session_plan_exercises");
+            long sessionId = row.getLong("session_id");
+            require(snapshotKeys.add(sessionId + ":" + row.getLong("exercise_id")), "Doppelte historische Planübung.");
+            int size = snapshotSizes.getOrDefault(sessionId, 0) + row.getInt("target_sets");
+            require(size <= 1_000, "Historischer Trainingsplan ist zu groß.");
+            snapshotSizes.put(sessionId, size);
+        }
+        root.put("version", 4);
         checkInterrupted();
         return root;
     }
@@ -129,7 +178,7 @@ public final class BackupValidation {
                 bool(row, "archived", 0, table);
                 break;
             case "plans":
-                plan(row, table);
+                plan(row, table, version);
                 integer(row, "exercise_id", 1, MAX_ID, null, table);
                 integer(row, "phase_id", 1, MAX_ID, version == 1 ? 1L : null, table);
                 integer(row, "position", 0, MAX_TOTAL_ROWS, null, table);
@@ -137,7 +186,7 @@ public final class BackupValidation {
                 break;
             case "sessions":
                 timestamp(row, "timestamp", false, table);
-                plan(row, table);
+                plan(row, table, version);
                 integer(row, "phase_id", 1, MAX_ID, version == 1 ? 1L : null, table);
                 bool(row, "cardio", 0, table);
                 string(row, "cardio_type", 2_048, "", table);
@@ -160,6 +209,20 @@ public final class BackupValidation {
                 string(row, "reason", 16_384, "", table);
                 integer(row, "position", 0, MAX_TOTAL_ROWS, null, table);
                 break;
+            case "plan_identities":
+                integer(row, "phase_id", 1, MAX_ID, null, table);
+                require(validPlanKey(string(row, "plan_key", 36, null, table)), "Ungültige Trainingsplan-ID.");
+                require(!string(row, "name", 128, null, table).trim().isEmpty(), "Leerer Trainingsplanname.");
+                integer(row, "position", 0, MAX_TOTAL_ROWS, null, table);
+                break;
+            case "session_plan_exercises":
+                integer(row, "session_id", 1, MAX_ID, null, table);
+                integer(row, "exercise_id", 1, MAX_ID, null, table);
+                integer(row, "target_sets", 1, MAX_TARGET_SETS, null, table);
+                String snapshotKind = string(row, "kind", 16, null, table);
+                require("reps".equals(snapshotKind) || "time".equals(snapshotKind), "Ungültige historische Übungsart.");
+                bool(row, "per_side", 1, table);
+                break;
             case "body_weights":
                 timestamp(row, "timestamp", false, table);
                 real(row, "kg", Double.MIN_VALUE, 500, table);
@@ -168,9 +231,14 @@ public final class BackupValidation {
         }
     }
 
-    private static void plan(JSONObject row, String table) throws JSONException {
-        String plan = string(row, "plan", 1, null, table);
-        require("A".equals(plan) || "B".equals(plan), "Ungültiger Trainingsplan.");
+    private static boolean validPlanKey(String key) {
+        return "A".equals(key) || "B".equals(key) ||
+            key.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+    }
+
+    private static void plan(JSONObject row, String table, int version) throws JSONException {
+        String plan = string(row, "plan", version < 4 ? 1 : 36, null, table);
+        require(validPlanKey(plan), "Ungültiger Trainingsplan.");
     }
 
     private static void timestamp(JSONObject row, String field, boolean nullable, String table) throws JSONException {
