@@ -52,15 +52,26 @@ class MainActivity : Activity() {
     private var weightRangeDays:Int=90
     private var activeScroll: ScrollView?=null
     private var renderedTab=""
+    private var workoutProgress:TextView?=null
+    private var workoutFinish:View?=null
 
-    private val dark=Color.rgb(24,58,51)
-    private val accent=Color.rgb(25,113,100)
-    private val light=Color.rgb(245,248,246)
-    private val ink=Color.rgb(37,47,44)
-    private val muted=Color.rgb(105,120,114)
+    private var palette=TrainingPalette.SAGE
+    private val dark get()=palette.header
+    private val accent get()=palette.accent
+    private val light get()=palette.background
+    private val ink get()=palette.text
+    private val muted get()=palette.muted
+    private val surface get()=palette.surface
+    private val border get()=palette.border
+    private fun settingsPrefs()=getSharedPreferences("interface_settings",MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState:Bundle?) {
+        palette=TrainingPalette.fromName(settingsPrefs().getString("theme","SAGE"))
+        setTheme(if(palette.darkMode)R.style.AppThemeDark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
+        window.statusBarColor=dark
+        window.navigationBarColor=surface
+        window.decorView.systemUiVisibility=if(palette.darkMode)0 else View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         store=Store(this)
         updates=UpdateManager(this)
         pendingExport=ExportRequest.restore(savedInstanceState)
@@ -73,6 +84,11 @@ class MainActivity : Activity() {
         } else {
             viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
             restoreDraft()
+            tab=savedInstanceState?.getString("ui_tab") ?: "Start"
+            if(tab=="Workout" && draft==null)tab="Start"
+            analysis=savedInstanceState?.getString("ui_analysis") ?: "Tabelle"
+            plan=savedInstanceState?.getString("ui_plan") ?: "A"
+            if(savedInstanceState?.containsKey("ui_phase")==true)viewingPhaseId=savedInstanceState.getLong("ui_phase")
             render()
             if(savedInstanceState?.getBoolean("backup_import_running")==true)
                 info("Bitte prüfe den Datenstand. Falls die Wiederherstellung unterbrochen wurde, starte sie erneut.")
@@ -191,6 +207,10 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
     override fun onSaveInstanceState(outState:Bundle) {
+        outState.putString("ui_tab",tab)
+        outState.putString("ui_analysis",analysis)
+        outState.putString("ui_plan",plan)
+        viewingPhaseId?.let {outState.putLong("ui_phase",it)}
         pendingExport?.save(outState)
         outState.putBoolean("backup_import_running",importTask!=null)
         super.onSaveInstanceState(outState)
@@ -219,16 +239,16 @@ class MainActivity : Activity() {
     }
     private fun card(parent:LinearLayout):LinearLayout {
         val c=column().apply {
-            background=shape(Color.WHITE,16,Color.rgb(222,233,228))
-            setPadding(dp(14),dp(14),dp(14),dp(14))
+            background=shape(surface,12,border)
+            setPadding(dp(10),dp(10),dp(10),dp(10))
         }
-        add(parent,c);gap(parent,11);return c
+        add(parent,c);gap(parent,12);return c
     }
     private fun button(title:String,primary:Boolean=true,onClick:()->Unit):Button =
         Button(this).apply {
             text=title;textSize=14f;isAllCaps=false
-            setTextColor(if(primary)Color.WHITE else accent)
-            background=shape(if(primary)accent else Color.rgb(230,243,238),11)
+            setTextColor(if(primary)palette.onAccent else ink)
+            background=shape(if(primary)accent else palette.secondary,8)
             setPadding(dp(9),dp(4),dp(9),dp(4))
             minHeight=dp(43);minimumHeight=dp(43)
             setOnClickListener {onClick()}
@@ -240,7 +260,9 @@ class MainActivity : Activity() {
             inputType=if(number) InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
                 else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setSelectAllOnFocus(true)
-            background=shape(light,8,Color.rgb(210,226,217))
+            setTextColor(ink);setHintTextColor(muted)
+            if(number)gravity=Gravity.CENTER
+            background=shape(light,7,border)
             setPadding(dp(8),dp(9),dp(8),dp(9))
         }
     private fun watch(field:EditText,callback:(String)->Unit) {
@@ -257,10 +279,11 @@ class MainActivity : Activity() {
     private fun render() {
         val previousScroll=if(renderedTab==tab) activeScroll?.scrollY ?: 0 else 0
         renderedTab=tab
-        root=column().apply {setBackgroundColor(light)}
+        workoutProgress=null;workoutFinish=null
+        root=column().apply {setBackgroundColor(light);isFocusableInTouchMode=true}
         setContentView(root)
         val header=column().apply {
-            setBackgroundColor(dark);setPadding(dp(18),dp(14),dp(18),dp(13))
+            setBackgroundColor(dark);setPadding(dp(14),dp(5),dp(10),dp(6))
         }
         val top=row()
         val heading=when(tab) {
@@ -281,15 +304,35 @@ class MainActivity : Activity() {
             }
             add(top,icon,44,44)
         }
+        if(tab=="Workout") {
+            val menu=text("⋯",25f,true,Color.WHITE).apply {
+                gravity=Gravity.CENTER;contentDescription="Trainingsoptionen"
+                setOnClickListener {workoutMenu()}
+            }
+            add(top,menu,44,44)
+        }
         add(header,top)
+        if(tab=="Workout") {
+            val line=row()
+            val progress=text("",13f,true,Color.WHITE)
+            workoutProgress=progress
+            line.addView(progress,LinearLayout.LayoutParams(0,-2,1f))
+            add(line,text(date(workoutTimestamp),12f,false,Color.WHITE).apply {
+                setPadding(dp(6),dp(5),dp(4),dp(5))
+                contentDescription="Trainingsdatum ändern"
+                setOnClickListener {chooseTrainingDate(workoutTimestamp){workoutTimestamp=it;saveDraft();render()}}
+            },-2)
+            add(header,line)
+            updateWorkoutProgress()
+        }
         add(root,header)
         val scroll=ScrollView(this).apply {isFillViewport=true;clipToPadding=false}
         activeScroll=scroll
-        page=column().apply {setPadding(dp(14),dp(16),dp(14),dp(20))}
+        page=column().apply {setPadding(dp(12),dp(12),dp(12),dp(16))}
         scroll.addView(page)
         val refresh=androidx.swiperefreshlayout.widget.SwipeRefreshLayout(this).apply {
             setColorSchemeColors(accent)
-            setProgressBackgroundColorSchemeColor(Color.WHITE)
+            setProgressBackgroundColorSchemeColor(surface)
             setOnChildScrollUpCallback { _, _ -> scroll.canScrollVertically(-1) }
             setOnRefreshListener {
                 // Pulling down triggers a manual search even if automatic
@@ -297,8 +340,8 @@ class MainActivity : Activity() {
                 updates.checkNow { isRefreshing=false }
             }
         }
-        refresh.addView(scroll)
-        root.addView(refresh,LinearLayout.LayoutParams(-1,0,1f))
+        if(tab=="Workout")root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        else {refresh.addView(scroll);root.addView(refresh,LinearLayout.LayoutParams(-1,0,1f))}
         when(tab) {
             "Start"->home()
             "Training"->plans()
@@ -309,20 +352,25 @@ class MainActivity : Activity() {
             else->dataPage()
         }
         val nav=row().apply {
-            setPadding(dp(3),dp(5),dp(3),dp(5));setBackgroundColor(Color.WHITE)
+            setPadding(dp(3),dp(5),dp(3),dp(5));setBackgroundColor(surface)
         }
         val tabs=listOf("Start","Training","Verlauf")
         val labels=listOf("Training","Planung","Auswertung")
         val icons=listOf("⌂","☷","↗")
         tabs.forEachIndexed {i,name ->
-            val b=column().apply {gravity=Gravity.CENTER}
+            val b=column().apply {gravity=Gravity.CENTER;if(tab==name)background=shape(palette.secondary,8)}
             add(b,text(icons[i],18f,true,if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
             add(b,text(labels[i],if(name=="Training")9f else 10f,tab==name,
                 if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
             b.setOnClickListener {tab=name;render()}
             nav.addView(b,LinearLayout.LayoutParams(0,dp(55),1f))
         }
-        if(tab !in listOf("Workout","Daten","Katalog"))add(root,nav)
+        if(tab=="Workout") {
+            val footer=column().apply {setBackgroundColor(surface);setPadding(dp(12),dp(5),dp(12),dp(8))}
+            workoutFinish?.let {add(footer,it)}
+            add(root,footer)
+        } else if(tab !in listOf("Daten","Katalog"))add(root,nav)
+        root.requestFocus()
         if(previousScroll>0) scroll.post {scroll.scrollTo(0,previousScroll)}
     }
     private fun title(s:String,subtitle:String?=null) {
@@ -475,7 +523,7 @@ class MainActivity : Activity() {
             }
             add(line,button("ⓘ",false){preview()}.apply {contentDescription="Übungen anzeigen"},44)
             add(line,button("▶"){
-                if(exercises.isEmpty()){tab="Training";render()}
+                if(exercises.isEmpty()){tab="Training";render();planEditor(current.id,identity)}
                 else {plan=identity.key;askCardio()}
             }.apply {contentDescription="Training starten"},48)
             add(c,line)
@@ -660,17 +708,27 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    private fun updateWorkoutProgress() {
+        val items=draft.orEmpty()
+        val done=items.sumOf {it.sets.count {s->s.completed}}
+        val total=items.sumOf {if(it.replacedById!=null)it.sets.count {s->s.completed} else it.sets.size}
+        workoutProgress?.text="Sätze: $done / $total"
+    }
+
+    private fun workoutMenu() {
+        AlertDialog.Builder(this).setTitle("Training")
+            .setItems(arrayOf("Training später fortsetzen","Training verwerfen")) {_,i->
+                if(i==0){saveDraft();tab="Start";render()}
+                else AlertDialog.Builder(this).setTitle("Training verwerfen?")
+                    .setMessage("Nicht gespeicherte Eingaben gehen verloren.")
+                    .setNegativeButton("Zurück",null)
+                    .setPositiveButton("Verwerfen"){_,_->clearDraft();tab="Start";render()}.show()
+            }.show()
+    }
+
     private fun workout() {
-        title(store.planName(activePlan,activePhaseId),"Vorwerte sind Vorschläge: Erledigte Sätze bitte mit ✓ bestätigen.")
-        val dateCard=card(page)
-        add(dateCard,text("Trainingsdatum und Uhrzeit",14f,true));gap(dateCard,7)
-        add(dateCard,button(date(workoutTimestamp)+"  ·  Ändern",false) {
-            chooseTrainingDate(workoutTimestamp) {
-                workoutTimestamp=it
-                saveDraft()
-                render()
-            }
-        })
+        add(page,text("Vorwerte stehen unter den Eingaben. Absolvierte Sätze mit Häkchen bestätigen.",12f,false,muted))
+        gap(page,8)
         if(workoutCardio) {
             val c=card(page)
             add(c,text("Vorher Kondition: "+(workoutCardioType.ifBlank{"Ja"})+
@@ -679,7 +737,14 @@ class MainActivity : Activity() {
         val list=draft ?: return
         for(item in list) {
             val c=card(page)
-            add(c,text(item.exercise.name,17f,true));gap(c,3)
+            val exerciseHead=row().apply {
+                setPadding(dp(7),dp(5),dp(5),dp(5))
+                background=shape(if(item.sets.all {it.completed})palette.completedHeader else palette.exerciseHeader,7)
+            }
+            exerciseHead.addView(text(item.exercise.name,16f,true),LinearLayout.LayoutParams(0,-2,1f))
+            if(item.replacedById==null)add(exerciseHead,button("⋯",false){replaceExerciseDialog(item)}
+                .apply {contentDescription="Übung ersetzen"},40,36)
+            add(c,exerciseHead);gap(c,6)
             if(item.replacedById!=null) {
                 val other=store.exercise(item.replacedById!!)
                 add(c,text("Ersetzt durch: "+(other?.name ?: "Unbekannte Übung"),13f,true,accent))
@@ -712,67 +777,73 @@ class MainActivity : Activity() {
             }
             add(c,text(if(item.exercise.kind=="time")"Haltedauer in Sekunden" else
                 (if(item.exercise.perSide)"Gewicht in kg pro Seite" else "Gewicht in kg (optional)")+" · Wiederholungen",12f,false,muted))
-            store.mostRecentNote(item.exercise.id)?.let {previousNote->
-                gap(c,5)
-                add(c,text("Frühere Bemerkung: "+previousNote,12f,false,muted))
-            }
-            gap(c,9)
+            val previous=store.previousPlanSets(item.exercise.id,activePlan,activePhaseId,workoutTimestamp)
             val headings=row()
-            add(headings,text("Satz",11f,true,muted),30)
-            if(item.exercise.kind=="time") {
-                add(headings,text("Sek.",11f,true,muted),80)
-                add(headings,text("RIR",11f,true,muted),64)
-            } else {
-                add(headings,text("kg",11f,true,muted),73)
-                add(headings,text("Wdh.",11f,true,muted),66)
-                add(headings,text("RIR",11f,true,muted),64)
-            }
-            add(headings,text("OK",11f,true,muted),35)
+            add(headings,text("Satz",11f,true,muted),28)
+            val labels=if(item.exercise.kind=="time")listOf("Sek.","RIR") else listOf("kg","Wdh.","RIR")
+            for(label in labels)headings.addView(text(label,11f,true,muted).apply {gravity=Gravity.CENTER},
+                LinearLayout.LayoutParams(0,-2,1f))
+            add(headings,text("OK",11f,true,muted).apply {gravity=Gravity.CENTER},42)
             add(c,headings);gap(c,4)
             item.sets.forEachIndexed {i,s ->
-                val r=row()
-                add(r,text((item.setNumberOffset+i+1).toString()+".",14f,true),30)
-                if(item.exercise.kind=="time") {
-                    val sec=edit(s.seconds,"Sek.",true)
-                    add(r,sec,75);watch(sec){s.seconds=it;saveDraft()}
-                } else {
-                    val kg=edit(s.weight,"kg",true)
-                    add(r,kg,68);watch(kg){s.weight=it;saveDraft()}
-                    add(r,View(this),5,1)
-                    val reps=edit(s.reps,"Wdh.",true)
-                    add(r,reps,61);watch(reps){s.reps=it;saveDraft()}
+                val number=item.setNumberOffset+i+1
+                val last=previous.firstOrNull {it.number==number}
+                val setCard=column().apply {
+                    setPadding(dp(3),dp(4),dp(3),dp(4))
+                    background=shape(if(s.completed)palette.completed else surface,7)
                 }
-                add(r,View(this),5,1)
-                val rir=edit(s.rir,"–",true)
-                add(r,rir,55);watch(rir){s.rir=it;saveDraft()}
+                val r=row()
+                add(r,text(number.toString()+".",13f,true),25)
+                fun field(value:String,hint:String,old:String,save:(String)->Unit) {
+                    val container=column().apply {setPadding(dp(2),0,dp(2),0)}
+                    val input=edit(value,hint,true).apply {
+                        inputType=if(hint=="kg" || hint=="RIR") InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                            else InputType.TYPE_CLASS_NUMBER
+                        gravity=Gravity.CENTER
+                    }
+                    add(container,input,-1,42)
+                    watch(input){save(it);saveDraft()}
+                    add(container,text(old.ifBlank {"–"},10f,false,muted).apply {gravity=Gravity.CENTER})
+                    r.addView(container,LinearLayout.LayoutParams(0,-2,1f))
+                }
+                if(item.exercise.kind=="time") {
+                    field(s.seconds,"Sek.",last?.seconds?.toString().orEmpty()){s.seconds=it}
+                } else {
+                    field(s.weight,"kg",last?.weight?.let {formatNumber(it)}.orEmpty()){s.weight=it}
+                    field(s.reps,"Wdh.",last?.reps?.toString().orEmpty()){s.reps=it}
+                }
+                field(s.rir,"RIR",last?.rir?.let {formatNumber(it)}.orEmpty()){s.rir=it}
                 val complete=CheckBox(this).apply {
-                    text="✓"
-                    textSize=13f
                     isChecked=s.completed
+                    contentDescription="Satz $number abgeschlossen"
                     buttonTintList=android.content.res.ColorStateList.valueOf(accent)
                     setPadding(0,0,0,0)
-                    setOnCheckedChangeListener {button,checked ->
-                        val valid=if(item.exercise.kind=="time")
-                            (s.seconds.trim().toIntOrNull() ?: 0)>0
-                        else (s.reps.trim().toIntOrNull() ?: 0)>0
+                    setOnCheckedChangeListener {box,checked ->
+                        val valid=if(item.exercise.kind=="time")(s.seconds.trim().toIntOrNull() ?: 0)>0
+                            else (s.reps.trim().toIntOrNull() ?: 0)>0
                         if(checked && !valid) {
-                            info("Zuerst die Wiederholungen bzw. Sekunden eintragen.")
-                            button.isChecked=false
+                            info("Zuerst Wiederholungen bzw. Sekunden eintragen.")
+                            box.isChecked=false
                         } else {
                             s.completed=checked
+                            setCard.background=shape(if(checked)palette.completed else surface,7)
+                            exerciseHead.background=shape(if(item.sets.all {it.completed})palette.completedHeader else palette.exerciseHeader,7)
+                            updateWorkoutProgress()
                             saveDraft()
                         }
                     }
                 }
-                add(r,complete,43)
-                add(c,r)
-                val noteButton=button(if(s.note.isBlank())"+ Notiz zu Satz "+(i+1)
-                    else "✎ Notiz zu Satz "+(i+1)+" bearbeiten",false) {
-                    noteDialog(s) {saveDraft();render()}
-                }
-                add(c,noteButton)
-                if(s.note.isNotBlank()) add(c,text(s.note,12f,false,muted))
-                gap(c,7)
+                add(r,complete,40)
+                add(setCard,r)
+                add(setCard,text(if(s.note.isBlank())"+ Bemerkung hinzufügen" else s.note,12f,false,ink).apply {
+                    setPadding(dp(5),dp(9),dp(5),dp(6))
+                    contentDescription=if(s.note.isBlank())"Bemerkung zu Satz $number hinzufügen" else "Bemerkung zu Satz $number bearbeiten: "+s.note
+                    setOnClickListener {noteDialog(s){saveDraft();render()}}
+                })
+                if(!last?.note.isNullOrBlank())add(setCard,text("Vorher: "+last?.note,11f,false,muted).apply {
+                    setPadding(dp(5),0,dp(5),dp(4))
+                })
+                add(c,setCard);gap(c,5)
             }
             val controls=row()
             controls.addView(button("+ Satz",false) {
@@ -780,17 +851,17 @@ class MainActivity : Activity() {
                 saveDraft()
                 render()
             },LinearLayout.LayoutParams(0,dp(44),1f))
-            if(item.sets.size>2) {
+            val planned=store.planEntries(activePlan,activePhaseId).firstOrNull {it.first.id==(item.replacementForId ?: item.exercise.id)}?.second ?: 2
+            if(item.sets.size>(planned-item.setNumberOffset).coerceAtLeast(1) && item.sets.lastOrNull()?.completed==false) {
                 add(controls,View(this),8,1)
                 controls.addView(button("− Letzter Satz",false) {
                     item.sets.removeAt(item.sets.lastIndex);saveDraft();render()
                 },LinearLayout.LayoutParams(0,dp(44),1f))
             }
             add(c,controls)
-            gap(c,8)
-            add(c,button("Übung ersetzen",false){replaceExerciseDialog(item)})
+            gap(c,3)
         }
-        add(page,button("Training abschließen und speichern") {
+        workoutFinish=button("Training abschließen und speichern") {
             val confirmed=list.sumOf {item->item.sets.count {it.completed} }
             if(confirmed==0) {
                 info("Bitte mindestens einen absolvierten Satz mit ✓ bestätigen.")
@@ -823,14 +894,7 @@ class MainActivity : Activity() {
                             .setPositiveButton("OK",null).show()
                     }
                 }.show()
-        });gap(page,10)
-        add(page,button("Training abbrechen",false) {
-            AlertDialog.Builder(this).setTitle("Training verwerfen?")
-                .setMessage("Nicht gespeicherte Eingaben gehen verloren.")
-                .setNegativeButton("Zurück",null).setPositiveButton("Verwerfen"){_,_->
-                    clearDraft();tab="Start";render()
-                }.show()
-        })
+        }
     }
 
     private fun plans() {
@@ -1268,7 +1332,7 @@ class MainActivity : Activity() {
             gravity=Gravity.CENTER_VERTICAL or (if(lines==3 || value=="Übung")
                 Gravity.LEFT else Gravity.CENTER_HORIZONTAL)
             setPadding(dp(7),dp(4),dp(7),dp(4))
-            background=shape(Color.WHITE,0,Color.rgb(224,232,227))
+            background=shape(surface,0,border)
             layoutParams=LinearLayout.LayoutParams(dp(width),dp(height))
             maxLines=lines
             ellipsize=android.text.TextUtils.TruncateAt.END
@@ -1606,7 +1670,12 @@ class MainActivity : Activity() {
     }
 
     private fun dataPage() {
-        title("Daten & Sicherung","Alle Trainingsdaten bleiben lokal auf dem Gerät.")
+        title("Einstellungen","Alle Trainingsdaten bleiben lokal auf dem Gerät.")
+        val colors=card(page)
+        add(colors,text("Farbschema",17f,true));gap(colors,5)
+        for(option in TrainingPalette.entries) add(colors,button(option.displayName,option==palette){
+            if(option!=palette){settingsPrefs().edit().putString("theme",option.name).apply();recreate()}
+        })
         val updateCard=card(page)
         add(updateCard,text("Software-Updates",17f,true))
         gap(updateCard,7)
@@ -1797,7 +1866,7 @@ class MainActivity : Activity() {
             fun x(t:Long):Float=if(maxX==minX)(l+r)/2f else
                 l+(r-l)*(t-minX).toFloat()/(maxX-minX).toFloat()
             fun y(v:Double):Float=bottom-((v-minY)/(maxY-minY)).toFloat()*(bottom-top)
-            p.style=Paint.Style.STROKE;p.color=Color.rgb(208,224,215);p.strokeWidth=dp(1).toFloat()
+            p.style=Paint.Style.STROKE;p.color=border;p.strokeWidth=dp(1).toFloat()
             for(i in 0..4) {
                 val yy=top+(bottom-top)*i/4f
                 canvas.drawLine(l,yy,r,yy,p)

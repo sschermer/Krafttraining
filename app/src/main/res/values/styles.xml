@@ -7,4 +7,11 @@
         <item name="android:navigationBarColor">#FFFFFF</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+    <style name="AppThemeDark" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#78C9A7</item>
+        <item name="android:statusBarColor">#17191B</item>
+        <item name="android:navigationBarColor">#202225</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

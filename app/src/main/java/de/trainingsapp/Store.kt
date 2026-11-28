@@ -228,9 +228,11 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5
             if(source!=null) db.execSQL("""INSERT INTO plans(plan,exercise_id,position,target_sets,phase_id)
                 SELECT plan,exercise_id,position,target_sets,? FROM plans WHERE phase_id=?""",
                 arrayOf(id,source.id))
-            installPlanIdentities(db)
+            if(source==null) {
+                db.execSQL("INSERT INTO plan_identities(phase_id,plan_key,name,position) VALUES(?,'A','Training A',0)",arrayOf(id))
+                db.execSQL("INSERT INTO plan_identities(phase_id,plan_key,name,position) VALUES(?,'B','Training B',1)",arrayOf(id))
+            }
             if(source!=null) {
-                db.delete("plan_identities","phase_id=?",arrayOf(id.toString()))
                 db.execSQL("""INSERT INTO plan_identities(phase_id,plan_key,name,position)
                     SELECT ?,plan_key,name,position FROM plan_identities WHERE phase_id=?""",
                     arrayOf(id,source.id))
@@ -285,7 +287,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5
             })
             if(copyKey!=null) db.execSQL("""INSERT INTO plans(plan,exercise_id,position,target_sets,phase_id)
                 SELECT ?,exercise_id,position,target_sets,phase_id FROM plans WHERE phase_id=? AND plan=?""",
-                arrayOf(key,phaseId,copyKey))
+                arrayOf<Any>(key,phaseId,copyKey))
             db.setTransactionSuccessful()
             return PlanIdentity(key,cleaned)
         } finally { db.endTransaction() }
@@ -393,13 +395,12 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5
         })
     }
     /** Replace a plan in one transaction, only after the editor's explicit Save.
-     * The current legacy storage still accepts A/B only; the v4 migration will
-     * replace this restriction with stable plan identities.
+     * Plan identity stays unchanged while exercises are replaced.
      */
     fun savePlanEntries(plan:String, phaseId:Long, entries:List<Pair<Long,Int>>) {
         require(entries.map { it.first }.distinct().size == entries.size) { "Doppelte Übung." }
         require(entries.all { it.second in 1..BackupValidation.MAX_TARGET_SETS }) { "Ungültige Satzanzahl." }
-        require(entries.sumOf { it.second.coerceAtLeast(2) } <= 1000) { "Zu viele Sätze." }
+        require(entries.sumOf { it.second } <= 1000) { "Zu viele Sätze." }
         val db=writableDatabase
         db.beginTransaction()
         try {
@@ -540,7 +541,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5
     fun newDraft(plan:String,phaseId:Long=activePhase()?.id ?: 1L,before:Long=System.currentTimeMillis()):MutableList<ExerciseDraft> = planEntries(plan,phaseId).map { (exercise, count) ->
         val previous=previousPlanSets(exercise.id,plan,phaseId,before)
         val rows=(0 until count.coerceIn(1,BackupValidation.MAX_TARGET_SETS)).map { i ->
-            val last=previous.getOrNull(i)
+            val last=previous.firstOrNull {it.number==i+1}
             SetDraft(
                 last?.weight?.let { formatNumber(it) } ?: "",
                 last?.reps?.toString() ?: "",
@@ -568,10 +569,10 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5
             }
             val weight=row.weight.trim().replace(',','.').toDoubleOrNull()
             val rir=row.rir.trim().replace(',','.').toDoubleOrNull()
-            require(row.weight.isBlank() || (weight!=null && weight>=0.0)) {
+            require(row.weight.isBlank() || (weight!=null && weight.isFinite() && weight in 0.0..100_000.0)) {
                 "Ungültiges Gewicht bei ${exercise.name}."
             }
-            require(row.rir.isBlank() || (rir!=null && rir>=0.0)) {
+            require(row.rir.isBlank() || (rir!=null && rir.isFinite() && rir in 0.0..10_000.0)) {
                 "Ungültiger RIR-Wert bei ${exercise.name}."
             }
         }
@@ -679,8 +680,8 @@ class Store(context: Context) : SQLiteOpenHelper(context, "training.db", null, 5
             require(value!=null && value>0) {"Ungültiger Satz bei \${ex.name}."}
             val weight=set.weight.trim().replace(',','.').toDoubleOrNull()
             val rir=set.rir.trim().replace(',','.').toDoubleOrNull()
-            require(set.weight.isBlank() || (weight!=null && weight>=0)) {"Ungültiges Gewicht."}
-            require(set.rir.isBlank() || (rir!=null && rir>=0)) {"Ungültiger RIR-Wert."}
+            require(set.weight.isBlank() || (weight!=null && weight.isFinite() && weight in 0.0..100_000.0)) {"Ungültiges Gewicht."}
+            require(set.rir.isBlank() || (rir!=null && rir.isFinite() && rir in 0.0..10_000.0)) {"Ungültiger RIR-Wert."}
         }
         val db=writableDatabase
         db.beginTransaction()
