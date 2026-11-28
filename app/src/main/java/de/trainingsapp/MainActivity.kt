@@ -46,20 +46,32 @@ class MainActivity : Activity() {
     private var viewingPhaseId:Long?=null
     private var activePhaseId:Long=1L
     private var workoutTimestamp:Long=System.currentTimeMillis()
-    private var expandedCategory:String?=null
+    private val expandedCategories=mutableSetOf<String>()
+    private var catalogQuery=""
     private var showArchivedExercises=false
     private var weightRangeDays:Int=90
     private var activeScroll: ScrollView?=null
     private var renderedTab=""
+    private var workoutProgress:TextView?=null
+    private var workoutFinish:View?=null
 
-    private val dark=Color.rgb(24,58,51)
-    private val accent=Color.rgb(25,113,100)
-    private val light=Color.rgb(245,248,246)
-    private val ink=Color.rgb(37,47,44)
-    private val muted=Color.rgb(105,120,114)
+    private var palette=TrainingPalette.SAGE
+    private val dark get()=palette.header
+    private val accent get()=palette.accent
+    private val light get()=palette.background
+    private val ink get()=palette.text
+    private val muted get()=palette.muted
+    private val surface get()=palette.surface
+    private val border get()=palette.border
+    private fun settingsPrefs()=getSharedPreferences("interface_settings",MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState:Bundle?) {
+        palette=TrainingPalette.fromName(settingsPrefs().getString("theme","SAGE"))
+        setTheme(if(palette.darkMode)R.style.AppThemeDark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
+        window.statusBarColor=dark
+        window.navigationBarColor=surface
+        window.decorView.systemUiVisibility=if(palette.darkMode)0 else View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         store=Store(this)
         updates=UpdateManager(this)
         pendingExport=ExportRequest.restore(savedInstanceState)
@@ -72,6 +84,11 @@ class MainActivity : Activity() {
         } else {
             viewingPhaseId=store.activePhase()?.id ?: store.phases().firstOrNull()?.id
             restoreDraft()
+            tab=savedInstanceState?.getString("ui_tab") ?: "Start"
+            if(tab=="Workout" && draft==null)tab="Start"
+            analysis=savedInstanceState?.getString("ui_analysis") ?: "Tabelle"
+            plan=savedInstanceState?.getString("ui_plan") ?: "A"
+            if(savedInstanceState?.containsKey("ui_phase")==true)viewingPhaseId=savedInstanceState.getLong("ui_phase")
             render()
             if(savedInstanceState?.getBoolean("backup_import_running")==true)
                 info("Bitte prüfe den Datenstand. Falls die Wiederherstellung unterbrochen wurde, starte sie erneut.")
@@ -147,8 +164,9 @@ class MainActivity : Activity() {
                 }
             }
             if(restored.isNotEmpty()) {
-                activePlan=root.optString("plan","A").takeIf {it in listOf("A","B")} ?: "A"
+                activePlan=root.optString("plan","A")
                 activePhaseId=root.optLong("phaseId",1L)
+                require(store.planIdentities(activePhaseId).any {it.key==activePlan}) {"Unbekannter Plan im Entwurf."}
                 workoutTimestamp=root.optLong("trainingDate",System.currentTimeMillis())
                 workoutCardio=root.optBoolean("cardio",false)
                 workoutCardioType=root.optString("cardioType","")
@@ -189,6 +207,10 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
     override fun onSaveInstanceState(outState:Bundle) {
+        outState.putString("ui_tab",tab)
+        outState.putString("ui_analysis",analysis)
+        outState.putString("ui_plan",plan)
+        viewingPhaseId?.let {outState.putLong("ui_phase",it)}
         pendingExport?.save(outState)
         outState.putBoolean("backup_import_running",importTask!=null)
         super.onSaveInstanceState(outState)
@@ -217,16 +239,16 @@ class MainActivity : Activity() {
     }
     private fun card(parent:LinearLayout):LinearLayout {
         val c=column().apply {
-            background=shape(Color.WHITE,16,Color.rgb(222,233,228))
-            setPadding(dp(14),dp(14),dp(14),dp(14))
+            background=shape(surface,12,border)
+            setPadding(dp(10),dp(10),dp(10),dp(10))
         }
-        add(parent,c);gap(parent,11);return c
+        add(parent,c);gap(parent,12);return c
     }
     private fun button(title:String,primary:Boolean=true,onClick:()->Unit):Button =
         Button(this).apply {
             text=title;textSize=14f;isAllCaps=false
-            setTextColor(if(primary)Color.WHITE else accent)
-            background=shape(if(primary)accent else Color.rgb(230,243,238),11)
+            setTextColor(if(primary)palette.onAccent else ink)
+            background=shape(if(primary)accent else palette.secondary,8)
             setPadding(dp(9),dp(4),dp(9),dp(4))
             minHeight=dp(43);minimumHeight=dp(43)
             setOnClickListener {onClick()}
@@ -238,7 +260,9 @@ class MainActivity : Activity() {
             inputType=if(number) InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
                 else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setSelectAllOnFocus(true)
-            background=shape(light,8,Color.rgb(210,226,217))
+            setTextColor(ink);setHintTextColor(muted)
+            if(number)gravity=Gravity.CENTER
+            background=shape(light,7,border)
             setPadding(dp(8),dp(9),dp(8),dp(9))
         }
     private fun watch(field:EditText,callback:(String)->Unit) {
@@ -255,21 +279,60 @@ class MainActivity : Activity() {
     private fun render() {
         val previousScroll=if(renderedTab==tab) activeScroll?.scrollY ?: 0 else 0
         renderedTab=tab
-        root=column().apply {setBackgroundColor(light)}
+        workoutProgress=null;workoutFinish=null
+        root=column().apply {setBackgroundColor(light);isFocusableInTouchMode=true}
         setContentView(root)
         val header=column().apply {
-            setBackgroundColor(dark);setPadding(dp(18),dp(14),dp(18),dp(13))
+            setBackgroundColor(dark);setPadding(dp(14),dp(5),dp(10),dp(6))
         }
-        add(header,text("TRAININGSAPP",21f,true,Color.WHITE))
-        add(header,text(if(draft!=null)"Training $activePlan läuft" else "Dein Training. Deine Entwicklung.",12f,false,Color.rgb(195,224,212)))
+        val top=row()
+        val heading=when(tab) {
+            "Training"->"Planung"
+            "Verlauf","Gewicht"->"Auswertung"
+            "Daten"->"Einstellungen"
+            "Katalog"->"Übungskatalog"
+            "Workout"->store.planName(activePlan,activePhaseId)
+            else->"Training"
+        }
+        top.addView(text(heading,21f,true,Color.WHITE),LinearLayout.LayoutParams(0,-2,1f))
+        if(tab!="Workout") {
+            val back=tab=="Daten" || tab=="Katalog"
+            val icon=text(if(back)"‹" else "⚙",25f,true,Color.WHITE).apply {
+                gravity=Gravity.CENTER
+                contentDescription=if(back)"Zurück" else "Einstellungen"
+                setOnClickListener {tab=if(back && tab=="Katalog")"Training" else if(back)"Start" else "Daten";render()}
+            }
+            add(top,icon,44,44)
+        }
+        if(tab=="Workout") {
+            val menu=text("⋯",25f,true,Color.WHITE).apply {
+                gravity=Gravity.CENTER;contentDescription="Trainingsoptionen"
+                setOnClickListener {workoutMenu()}
+            }
+            add(top,menu,44,44)
+        }
+        add(header,top)
+        if(tab=="Workout") {
+            val line=row()
+            val progress=text("",13f,true,Color.WHITE)
+            workoutProgress=progress
+            line.addView(progress,LinearLayout.LayoutParams(0,-2,1f))
+            add(line,text(date(workoutTimestamp),12f,false,Color.WHITE).apply {
+                setPadding(dp(6),dp(5),dp(4),dp(5))
+                contentDescription="Trainingsdatum ändern"
+                setOnClickListener {chooseTrainingDate(workoutTimestamp){workoutTimestamp=it;saveDraft();render()}}
+            },-2)
+            add(header,line)
+            updateWorkoutProgress()
+        }
         add(root,header)
         val scroll=ScrollView(this).apply {isFillViewport=true;clipToPadding=false}
         activeScroll=scroll
-        page=column().apply {setPadding(dp(14),dp(16),dp(14),dp(20))}
+        page=column().apply {setPadding(dp(12),dp(12),dp(12),dp(16))}
         scroll.addView(page)
         val refresh=androidx.swiperefreshlayout.widget.SwipeRefreshLayout(this).apply {
             setColorSchemeColors(accent)
-            setProgressBackgroundColorSchemeColor(Color.WHITE)
+            setProgressBackgroundColorSchemeColor(surface)
             setOnChildScrollUpCallback { _, _ -> scroll.canScrollVertically(-1) }
             setOnRefreshListener {
                 // Pulling down triggers a manual search even if automatic
@@ -277,30 +340,37 @@ class MainActivity : Activity() {
                 updates.checkNow { isRefreshing=false }
             }
         }
-        refresh.addView(scroll)
-        root.addView(refresh,LinearLayout.LayoutParams(-1,0,1f))
+        if(tab=="Workout")root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        else {refresh.addView(scroll);root.addView(refresh,LinearLayout.LayoutParams(-1,0,1f))}
         when(tab) {
             "Start"->home()
-            "Training"->if(draft==null)plans() else workout()
+            "Training"->plans()
+            "Workout"->if(draft!=null)workout() else home()
+            "Katalog"->catalog()
             "Verlauf"->results()
-            "Gewicht"->weightScreen()
+            "Gewicht"->results()
             else->dataPage()
         }
         val nav=row().apply {
-            setPadding(dp(3),dp(5),dp(3),dp(5));setBackgroundColor(Color.WHITE)
+            setPadding(dp(3),dp(5),dp(3),dp(5));setBackgroundColor(surface)
         }
-        val tabs=listOf("Start","Training","Verlauf","Gewicht","Daten")
-        val labels=listOf("Start","Trainingsplan","Verlauf","Gewicht","Daten")
-        val icons=listOf("⌂","A/B","↗","kg","⇩")
+        val tabs=listOf("Start","Training","Verlauf")
+        val labels=listOf("Training","Planung","Auswertung")
+        val icons=listOf("⌂","☷","↗")
         tabs.forEachIndexed {i,name ->
-            val b=column().apply {gravity=Gravity.CENTER}
+            val b=column().apply {gravity=Gravity.CENTER;if(tab==name)background=shape(palette.secondary,8)}
             add(b,text(icons[i],18f,true,if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
             add(b,text(labels[i],if(name=="Training")9f else 10f,tab==name,
                 if(tab==name)accent else muted).apply{gravity=Gravity.CENTER})
             b.setOnClickListener {tab=name;render()}
             nav.addView(b,LinearLayout.LayoutParams(0,dp(55),1f))
         }
-        add(root,nav)
+        if(tab=="Workout") {
+            val footer=column().apply {setBackgroundColor(surface);setPadding(dp(12),dp(5),dp(12),dp(8))}
+            workoutFinish?.let {add(footer,it)}
+            add(root,footer)
+        } else if(tab !in listOf("Daten","Katalog"))add(root,nav)
+        root.requestFocus()
         if(previousScroll>0) scroll.post {scroll.scrollTo(0,previousScroll)}
     }
     private fun title(s:String,subtitle:String?=null) {
@@ -309,15 +379,15 @@ class MainActivity : Activity() {
         else gap(page,12)
     }
     private fun planSelector(parent:LinearLayout) {
-        val r=row()
-        for(name in listOf("A","B")) {
-            val b=button("Training $name",plan==name) {
-                plan=name;expandedCategory=null;render()
-            }
-            r.addView(b,LinearLayout.LayoutParams(0,dp(45),1f))
-            if(name=="A")add(r,View(this),7,1)
-        }
-        add(parent,r);gap(parent,14)
+        val phase=viewingPhaseId ?: store.activePhase()?.id ?: store.phases().firstOrNull()?.id ?: return
+        val choices=store.planIdentities(phase)
+        if(choices.isEmpty())return
+        if(choices.none {it.key==plan})plan=choices.first().key
+        add(parent,button(store.planName(plan,phase)+"  ▾",false) {
+            AlertDialog.Builder(this).setTitle("Trainingsplan auswählen")
+                .setItems(choices.map {it.name}.toTypedArray()){_,i->plan=choices[i].key;render()}.show()
+        })
+        gap(parent,9)
     }
     private fun phaseHeader() {
         val active=store.activePhase()
@@ -342,7 +412,7 @@ class MainActivity : Activity() {
             return
         }
         AlertDialog.Builder(this).setTitle("Trainingsphase abschließen?")
-            .setMessage("Die Pläne A und B aus „"+current.name+
+            .setMessage("Die Trainingspläne aus „"+current.name+
                 "“ werden archiviert. Alle Trainingsdaten bleiben abrufbar. " +
                 "Danach kannst du über „Training erstellen“ eine neue Phase anlegen.")
             .setNegativeButton("Abbrechen",null)
@@ -350,7 +420,7 @@ class MainActivity : Activity() {
                 try {
                     store.finishPhase(current.id)
                     viewingPhaseId=current.id
-                    expandedCategory=null
+                    expandedCategories.clear()
                     render()
                     info("Trainingsphase archiviert.")
                 } catch(e:Exception) {info(e.message ?: "Abschluss fehlgeschlagen.")}
@@ -368,7 +438,7 @@ class MainActivity : Activity() {
         add(box,text("Name der neuen Trainingsphase",13f,true))
         val name=edit("Trainingsphase "+(store.phases().size+1),"Name")
         add(box,name);gap(box,13)
-        val choices=listOf("Leeren A/B-Plan erstellen","A/B-Pläne der bisherigen Phase kopieren")
+        val choices=listOf("Leere Trainingspläne erstellen","Pläne der bisherigen Phase kopieren")
         val chooser=RadioGroup(this).apply {orientation=RadioGroup.VERTICAL}
         choices.forEachIndexed {index,label ->
             val radio=RadioButton(this).apply {
@@ -393,7 +463,7 @@ class MainActivity : Activity() {
                 try {
                     val phase=store.createPhase(name.text.toString(),if(copy)previous?.id else null)
                     viewingPhaseId=phase.id
-                    expandedCategory=null
+                    expandedCategories.clear()
                     plan="A"
                     tab="Training"
                     dialog.dismiss()
@@ -406,54 +476,84 @@ class MainActivity : Activity() {
     }
 
     private fun home() {
-        title("Übersicht","Aktive Trainingsphase und Trainingsverlauf.")
-        phaseHeader()
-        val current=store.activePhase()
-        if(current!=null) {
-            planSelector(page)
-            val c=card(page)
-            add(c,text("Nächstes Training: "+current.name+" / "+plan,18f,true));gap(c,7)
-            val exercises=store.planEntries(plan,current.id)
-            if(exercises.isEmpty()) {
-                add(c,text("Noch keine Übungen ausgewählt.",14f,false,muted))
-                gap(c,12)
-                add(c,button("Übungen für Training $plan auswählen") {
-                    tab="Training";render()
-                })
-            } else {
-                exercises.forEach { (exercise,_) ->
-                    add(c,text("• "+exercise.name,14f))
-                }
-                gap(c,12)
-                add(c,button("Training $plan beginnen") {askCardio()})
-            }
+        if(draft!=null) {
+            val resume=card(page)
+            add(resume,text("Training läuft",13f,true,accent))
+            add(resume,text(store.planName(activePlan,activePhaseId),20f,true))
+            add(resume,text(date(workoutTimestamp),12f,false,muted))
+            gap(resume,7)
+            add(resume,button("Weitertrainieren"){tab="Workout";render()})
         }
         val recent=store.sessions().lastOrNull()
         val summary=card(page)
-        add(summary,text("Letztes Training",17f,true));gap(summary,5)
-        add(summary,text(recent?.let {"Training ${it.plan} · ${date(it.timestamp)}"} ?: "Noch kein Training gespeichert.",14f))
-        gap(summary,8)
-        add(summary,button("Fortschritt ansehen",false){tab="Verlauf";analysis="Tabelle";render()})
-        val weights=store.bodyWeights()
-        val w=card(page)
-        add(w,text("Körpergewicht",17f,true));gap(w,5)
-        add(w,text(weights.lastOrNull()?.let {formatNumber(it.kg)+" kg · "+date(it.timestamp)}
-            ?: "Noch keine Messung",15f))
-        gap(w,9)
-        add(w,button("Gewicht erfassen / Verlauf",false){tab="Gewicht";render()})
-        if(draft!=null) {
-            val running=card(page)
-            add(running,text("Training $activePlan noch nicht abgeschlossen",15f,true))
-            add(running,button("Weitertrainieren"){tab="Training";render()})
+        add(summary,text("Letztes Training",13f,true,muted))
+        if(recent==null) {
+            add(summary,text("Noch kein Training gespeichert.",14f))
+        } else {
+            val line=row()
+            val details=column()
+            add(details,text(store.planName(recent.plan,recent.phaseId),20f,true))
+            add(details,text(date(recent.timestamp)+" · "+store.sets(recent.id).size+" Sätze",12f,false,muted))
+            line.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+            add(line,button("ⓘ",false){showWorkoutPreview(recent)}.apply {contentDescription="Letztes Training anzeigen"},46)
+            add(summary,line)
+            summary.setOnLongClickListener {showWorkoutPreview(recent);true}
+            val result=store.performanceHistory(recent.plan,recent.phaseId)[recent.id]
+            if(result!=null && result.result.index!=null)add(summary,text("Index "+indexLabel(result),15f,true,accent))
         }
-        gap(page,9)
-        add(page,button("Trainingsplan bearbeiten",false){tab="Training";render()})
-        gap(page,6)
-        add(page,button("Frühere Trainingsphasen ansehen",false) {
-            tab="Verlauf";analysis="Tabelle";render()
-        })
-        gap(page,7)
-        add(page,button("Nach Updates suchen",false){updates.checkNow()})
+        val current=store.activePhase()
+        add(page,text("Trainingspläne",18f,true));gap(page,3)
+        add(page,text(current?.name ?: "Keine aktive Phase",12f,false,muted));gap(page,9)
+        if(current==null) {
+            add(page,button("Neue Trainingsphase"){createPhaseDialog()})
+        } else for(identity in store.planIdentities(current.id)) {
+            val c=card(page)
+            val exercises=store.planEntries(identity.key,current.id)
+            val last=store.sessions(identity.key,current.id).lastOrNull()
+            val line=row()
+            val left=column()
+            add(left,text(identity.name,17f,true))
+            add(left,text(exercises.size.toString()+" Übungen · "+(last?.let {date(it.timestamp,true)} ?: "noch nie"),
+                12f,false,muted))
+            line.addView(left,LinearLayout.LayoutParams(0,-2,1f))
+            fun preview() {
+                AlertDialog.Builder(this).setTitle(identity.name)
+                    .setMessage(exercises.joinToString("\n") {(ex,n)->ex.name+" · $n Sätze"}.ifBlank {"Keine Übungen im Plan."})
+                    .setPositiveButton("Schließen",null).show()
+            }
+            add(line,button("ⓘ",false){preview()}.apply {contentDescription="Übungen anzeigen"},44)
+            add(line,button("▶"){
+                if(exercises.isEmpty()){tab="Training";render();planEditor(current.id,identity)}
+                else {plan=identity.key;askCardio()}
+            }.apply {contentDescription="Training starten"},48)
+            add(c,line)
+            left.setOnLongClickListener {preview();true}
+        }
+        val w=card(page)
+        val weightRow=row()
+        val weightText=column()
+        add(weightText,text("Körpergewicht",13f,true,muted))
+        add(weightText,text(store.bodyWeights().lastOrNull()?.let {formatNumber(it.kg)+" kg · "+date(it.timestamp,true)}
+            ?: "Noch keine Messung",16f,true))
+        weightRow.addView(weightText,LinearLayout.LayoutParams(0,-2,1f))
+        add(weightRow,button("+",false){weightDialog()}.apply {contentDescription="Gewicht erfassen"},48)
+        add(w,weightRow)
+    }
+
+    private fun indexLabel(p:Store.SessionPerformance):String {
+        val index=p.result.index?.let {String.format(Locale.GERMANY,"%.1f",it)} ?: "–"
+        return (if(p.estimated && p.result.index!=null)"≈ " else "")+index+" ("+p.result.completedSets+")"
+    }
+
+    private fun showWorkoutPreview(session:TrainingSession) {
+        val lines=store.sets(session.id).groupBy {it.exerciseId}.map {(id,_)->
+            val ex=store.exercise(id)
+            if(ex==null)"Unbekannte Übung" else ex.name+": "+store.formatCell(session.id,ex)
+        }
+        AlertDialog.Builder(this).setTitle(store.planName(session.plan,session.phaseId)+" · "+date(session.timestamp,true))
+            .setMessage(lines.joinToString("\n").ifBlank {"Keine Sätze"})
+            .setNegativeButton("Schließen",null)
+            .setPositiveButton("Bearbeiten"){_,_->editSessionDialog(session)}.show()
     }
 
     private fun chooseTrainingDate(initial:Long,accept:(Long)->Unit) {
@@ -474,7 +574,7 @@ class MainActivity : Activity() {
 
     private fun askCardio() {
         if(draft!=null) {
-            tab="Training"
+            tab="Workout"
             render()
             info("Bitte zuerst das laufende Training abschließen oder verwerfen.")
             return
@@ -512,9 +612,9 @@ class MainActivity : Activity() {
                 activePlan=plan
                 activePhaseId=phase.id
                 workoutTimestamp=chosenDate
-                draft=store.newDraft(plan,phase.id)
+                draft=store.newDraft(plan,phase.id,chosenDate)
                 saveDraft()
-                tab="Training";render()
+                tab="Workout";render()
             }.show()
     }
 
@@ -552,7 +652,7 @@ class MainActivity : Activity() {
         }
         val box=column().apply {setPadding(dp(16),dp(10),dp(16),dp(10))}
         val intro=text("Ersatz für "+entry.exercise.name+
-            ". Die bisher bestätigten Sätze bleiben erhalten. Der A/B-Plan ändert sich nicht.",
+            ". Die bisher bestätigten Sätze bleiben erhalten. Der Trainingsplan ändert sich nicht.",
             13f,false,muted)
         add(box,intro);gap(box,10)
         val holder=column()
@@ -608,17 +708,27 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    private fun updateWorkoutProgress() {
+        val items=draft.orEmpty()
+        val done=items.sumOf {it.sets.count {s->s.completed}}
+        val total=items.sumOf {if(it.replacedById!=null)it.sets.count {s->s.completed} else it.sets.size}
+        workoutProgress?.text="Sätze: $done / $total"
+    }
+
+    private fun workoutMenu() {
+        AlertDialog.Builder(this).setTitle("Training")
+            .setItems(arrayOf("Training später fortsetzen","Training verwerfen")) {_,i->
+                if(i==0){saveDraft();tab="Start";render()}
+                else AlertDialog.Builder(this).setTitle("Training verwerfen?")
+                    .setMessage("Nicht gespeicherte Eingaben gehen verloren.")
+                    .setNegativeButton("Zurück",null)
+                    .setPositiveButton("Verwerfen"){_,_->clearDraft();tab="Start";render()}.show()
+            }.show()
+    }
+
     private fun workout() {
-        title("Training $activePlan","Vorwerte sind Vorschläge: Erledigte Sätze bitte mit ✓ bestätigen.")
-        val dateCard=card(page)
-        add(dateCard,text("Trainingsdatum und Uhrzeit",14f,true));gap(dateCard,7)
-        add(dateCard,button(date(workoutTimestamp)+"  ·  Ändern",false) {
-            chooseTrainingDate(workoutTimestamp) {
-                workoutTimestamp=it
-                saveDraft()
-                render()
-            }
-        })
+        add(page,text("Vorwerte stehen unter den Eingaben. Absolvierte Sätze mit Häkchen bestätigen.",12f,false,muted))
+        gap(page,8)
         if(workoutCardio) {
             val c=card(page)
             add(c,text("Vorher Kondition: "+(workoutCardioType.ifBlank{"Ja"})+
@@ -627,7 +737,14 @@ class MainActivity : Activity() {
         val list=draft ?: return
         for(item in list) {
             val c=card(page)
-            add(c,text(item.exercise.name,17f,true));gap(c,3)
+            val exerciseHead=row().apply {
+                setPadding(dp(7),dp(5),dp(5),dp(5))
+                background=shape(if(item.sets.all {it.completed})palette.completedHeader else palette.exerciseHeader,7)
+            }
+            exerciseHead.addView(text(item.exercise.name,16f,true),LinearLayout.LayoutParams(0,-2,1f))
+            if(item.replacedById==null)add(exerciseHead,button("⋯",false){replaceExerciseDialog(item)}
+                .apply {contentDescription="Übung ersetzen"},40,36)
+            add(c,exerciseHead);gap(c,6)
             if(item.replacedById!=null) {
                 val other=store.exercise(item.replacedById!!)
                 add(c,text("Ersetzt durch: "+(other?.name ?: "Unbekannte Übung"),13f,true,accent))
@@ -660,67 +777,73 @@ class MainActivity : Activity() {
             }
             add(c,text(if(item.exercise.kind=="time")"Haltedauer in Sekunden" else
                 (if(item.exercise.perSide)"Gewicht in kg pro Seite" else "Gewicht in kg (optional)")+" · Wiederholungen",12f,false,muted))
-            store.mostRecentNote(item.exercise.id)?.let {previousNote->
-                gap(c,5)
-                add(c,text("Frühere Bemerkung: "+previousNote,12f,false,muted))
-            }
-            gap(c,9)
+            val previous=store.previousPlanSets(item.exercise.id,activePlan,activePhaseId,workoutTimestamp)
             val headings=row()
-            add(headings,text("Satz",11f,true,muted),30)
-            if(item.exercise.kind=="time") {
-                add(headings,text("Sek.",11f,true,muted),80)
-                add(headings,text("RIR",11f,true,muted),64)
-            } else {
-                add(headings,text("kg",11f,true,muted),73)
-                add(headings,text("Wdh.",11f,true,muted),66)
-                add(headings,text("RIR",11f,true,muted),64)
-            }
-            add(headings,text("OK",11f,true,muted),35)
+            add(headings,text("Satz",11f,true,muted),28)
+            val labels=if(item.exercise.kind=="time")listOf("Sek.","RIR") else listOf("kg","Wdh.","RIR")
+            for(label in labels)headings.addView(text(label,11f,true,muted).apply {gravity=Gravity.CENTER},
+                LinearLayout.LayoutParams(0,-2,1f))
+            add(headings,text("OK",11f,true,muted).apply {gravity=Gravity.CENTER},42)
             add(c,headings);gap(c,4)
             item.sets.forEachIndexed {i,s ->
-                val r=row()
-                add(r,text((item.setNumberOffset+i+1).toString()+".",14f,true),30)
-                if(item.exercise.kind=="time") {
-                    val sec=edit(s.seconds,"Sek.",true)
-                    add(r,sec,75);watch(sec){s.seconds=it;saveDraft()}
-                } else {
-                    val kg=edit(s.weight,"kg",true)
-                    add(r,kg,68);watch(kg){s.weight=it;saveDraft()}
-                    add(r,View(this),5,1)
-                    val reps=edit(s.reps,"Wdh.",true)
-                    add(r,reps,61);watch(reps){s.reps=it;saveDraft()}
+                val number=item.setNumberOffset+i+1
+                val last=previous.firstOrNull {it.number==number}
+                val setCard=column().apply {
+                    setPadding(dp(3),dp(4),dp(3),dp(4))
+                    background=shape(if(s.completed)palette.completed else surface,7)
                 }
-                add(r,View(this),5,1)
-                val rir=edit(s.rir,"–",true)
-                add(r,rir,55);watch(rir){s.rir=it;saveDraft()}
+                val r=row()
+                add(r,text(number.toString()+".",13f,true),25)
+                fun field(value:String,hint:String,old:String,save:(String)->Unit) {
+                    val container=column().apply {setPadding(dp(2),0,dp(2),0)}
+                    val input=edit(value,hint,true).apply {
+                        inputType=if(hint=="kg" || hint=="RIR") InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                            else InputType.TYPE_CLASS_NUMBER
+                        gravity=Gravity.CENTER
+                    }
+                    add(container,input,-1,42)
+                    watch(input){save(it);saveDraft()}
+                    add(container,text(old.ifBlank {"–"},10f,false,muted).apply {gravity=Gravity.CENTER})
+                    r.addView(container,LinearLayout.LayoutParams(0,-2,1f))
+                }
+                if(item.exercise.kind=="time") {
+                    field(s.seconds,"Sek.",last?.seconds?.toString().orEmpty()){s.seconds=it}
+                } else {
+                    field(s.weight,"kg",last?.weight?.let {formatNumber(it)}.orEmpty()){s.weight=it}
+                    field(s.reps,"Wdh.",last?.reps?.toString().orEmpty()){s.reps=it}
+                }
+                field(s.rir,"RIR",last?.rir?.let {formatNumber(it)}.orEmpty()){s.rir=it}
                 val complete=CheckBox(this).apply {
-                    text="✓"
-                    textSize=13f
                     isChecked=s.completed
+                    contentDescription="Satz $number abgeschlossen"
                     buttonTintList=android.content.res.ColorStateList.valueOf(accent)
                     setPadding(0,0,0,0)
-                    setOnCheckedChangeListener {button,checked ->
-                        val valid=if(item.exercise.kind=="time")
-                            (s.seconds.trim().toIntOrNull() ?: 0)>0
-                        else (s.reps.trim().toIntOrNull() ?: 0)>0
+                    setOnCheckedChangeListener {box,checked ->
+                        val valid=if(item.exercise.kind=="time")(s.seconds.trim().toIntOrNull() ?: 0)>0
+                            else (s.reps.trim().toIntOrNull() ?: 0)>0
                         if(checked && !valid) {
-                            info("Zuerst die Wiederholungen bzw. Sekunden eintragen.")
-                            button.isChecked=false
+                            info("Zuerst Wiederholungen bzw. Sekunden eintragen.")
+                            box.isChecked=false
                         } else {
                             s.completed=checked
+                            setCard.background=shape(if(checked)palette.completed else surface,7)
+                            exerciseHead.background=shape(if(item.sets.all {it.completed})palette.completedHeader else palette.exerciseHeader,7)
+                            updateWorkoutProgress()
                             saveDraft()
                         }
                     }
                 }
-                add(r,complete,43)
-                add(c,r)
-                val noteButton=button(if(s.note.isBlank())"+ Notiz zu Satz "+(i+1)
-                    else "✎ Notiz zu Satz "+(i+1)+" bearbeiten",false) {
-                    noteDialog(s) {saveDraft();render()}
-                }
-                add(c,noteButton)
-                if(s.note.isNotBlank()) add(c,text(s.note,12f,false,muted))
-                gap(c,7)
+                add(r,complete,40)
+                add(setCard,r)
+                add(setCard,text(if(s.note.isBlank())"+ Bemerkung hinzufügen" else s.note,12f,false,ink).apply {
+                    setPadding(dp(5),dp(9),dp(5),dp(6))
+                    contentDescription=if(s.note.isBlank())"Bemerkung zu Satz $number hinzufügen" else "Bemerkung zu Satz $number bearbeiten: "+s.note
+                    setOnClickListener {noteDialog(s){saveDraft();render()}}
+                })
+                if(!last?.note.isNullOrBlank())add(setCard,text("Vorher: "+last?.note,11f,false,muted).apply {
+                    setPadding(dp(5),0,dp(5),dp(4))
+                })
+                add(c,setCard);gap(c,5)
             }
             val controls=row()
             controls.addView(button("+ Satz",false) {
@@ -728,17 +851,17 @@ class MainActivity : Activity() {
                 saveDraft()
                 render()
             },LinearLayout.LayoutParams(0,dp(44),1f))
-            if(item.sets.size>2) {
+            val planned=store.planEntries(activePlan,activePhaseId).firstOrNull {it.first.id==(item.replacementForId ?: item.exercise.id)}?.second ?: 2
+            if(item.sets.size>(planned-item.setNumberOffset).coerceAtLeast(1) && item.sets.lastOrNull()?.completed==false) {
                 add(controls,View(this),8,1)
                 controls.addView(button("− Letzter Satz",false) {
                     item.sets.removeAt(item.sets.lastIndex);saveDraft();render()
                 },LinearLayout.LayoutParams(0,dp(44),1f))
             }
             add(c,controls)
-            gap(c,8)
-            add(c,button("Übung ersetzen",false){replaceExerciseDialog(item)})
+            gap(c,3)
         }
-        add(page,button("Training abschließen und speichern") {
+        workoutFinish=button("Training abschließen und speichern") {
             val confirmed=list.sumOf {item->item.sets.count {it.completed} }
             if(confirmed==0) {
                 info("Bitte mindestens einen absolvierten Satz mit ✓ bestätigen.")
@@ -757,7 +880,7 @@ class MainActivity : Activity() {
                         val savedId=store.saveSession(activePlan,workoutCardio,workoutCardioType,
                             workoutCardioMinutes,list,activePhaseId,workoutTimestamp)
                         clearDraft()
-                        tab="Verlauf";analysis="Tabelle";render()
+                        tab="Verlauf";analysis="Tabelle";viewingPhaseId=activePhaseId;plan=activePlan;render()
                         AlertDialog.Builder(this)
                             .setTitle("Training gespeichert")
                             .setMessage("Wie möchtest du die vollständigen Daten dieses Trainings für ChatGPT bereitstellen?")
@@ -771,121 +894,206 @@ class MainActivity : Activity() {
                             .setPositiveButton("OK",null).show()
                     }
                 }.show()
-        });gap(page,10)
-        add(page,button("Training abbrechen",false) {
-            AlertDialog.Builder(this).setTitle("Training verwerfen?")
-                .setMessage("Nicht gespeicherte Eingaben gehen verloren.")
-                .setNegativeButton("Zurück",null).setPositiveButton("Verwerfen"){_,_->
-                    clearDraft();tab="Start";render()
-                }.show()
-        })
+        }
     }
 
     private fun plans() {
+        phaseHeader()
+        if(draft!=null) {
+            add(page,text("Bitte das laufende Training abschließen oder verwerfen, bevor Pläne geändert werden.",14f,false,muted))
+            add(page,button("Weitertrainieren"){tab="Workout";render()})
+            return
+        }
         val phase=store.activePhase()
-        title("Trainingsplan",phase?.name ?: "Keine aktive Trainingsphase")
-        if(phase==null) {
-            val hint=card(page)
-            add(hint,text("Noch keine aktive Trainingsphase. Erstelle eine Phase, um A/B-Pläne zusammenzustellen.",14f,false,muted))
-            gap(hint,9)
-            add(hint,button("Neue Trainingsphase anlegen"){createPhaseDialog()})
-        } else {
-            planSelector(page)
+        if(phase!=null) {
+            add(page,text("Trainingspläne",18f,true));gap(page,8)
+            for(identity in store.planIdentities(phase.id)) {
+                val c=card(page)
+                val line=row()
+                val details=column()
+                val entries=store.planEntries(identity.key,phase.id)
+                add(details,text(identity.name,17f,true))
+                add(details,text(entries.size.toString()+" Übungen · "+entries.sumOf {it.second}+" Sätze",12f,false,muted))
+                line.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+                details.setOnClickListener {planEditor(phase.id,identity)}
+                add(line,button("Bearbeiten",false){planEditor(phase.id,identity)},100)
+                add(line,button("⋯",false){
+                    AlertDialog.Builder(this).setTitle(identity.name)
+                        .setItems(arrayOf("Umbenennen","Duplizieren")){_,i->
+                            if(i==0)planNameDialog(phase.id,identity,false)
+                            else planNameDialog(phase.id,identity,true)
+                        }.show()
+                },42)
+                add(c,line)
+            }
+            add(page,button("+ Trainingsplan"){planNameDialog(phase.id,null,false)})
+            gap(page,14)
         }
+        add(page,button("Übungskatalog",false){expandedCategories.clear();catalogQuery="";tab="Katalog";render()})
+    }
 
-        // One accordion combines plan selection and editing the exercise catalog.
-        // Both views previously exposed the same exercise selection checkboxes.
-        val selected=if(phase!=null)store.planEntries(plan,phase.id).map {it.first.id}.toSet()
-            else emptySet<Long>()
-        val all=store.exercises(includeArchived=true).filter {
-            showArchivedExercises || !it.archived || it.id in selected
+    private fun planNameDialog(phaseId:Long,identity:Store.PlanIdentity?,duplicate:Boolean) {
+        val name=edit(if(duplicate)identity?.name.orEmpty()+" Kopie" else identity?.name.orEmpty(),"Name")
+        val dialog=AlertDialog.Builder(this)
+            .setTitle(if(duplicate)"Trainingsplan duplizieren" else if(identity==null)"Neuer Trainingsplan" else "Trainingsplan umbenennen")
+            .setView(name).setNegativeButton("Abbrechen",null).setPositiveButton("Speichern",null).create()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            try {
+                val key=if(identity==null || duplicate)store.createPlan(phaseId,name.text.toString(),if(duplicate)identity?.key else null).key
+                    else {store.renamePlan(phaseId,identity.key,name.text.toString());identity.key}
+                plan=key
+                dialog.dismiss();render()
+                if(identity==null)store.planIdentities(phaseId).firstOrNull {it.key==key}?.let {planEditor(phaseId,it)}
+            } catch(e:Exception) {name.error=e.message ?: "Speichern fehlgeschlagen"}
         }
-        val controls=card(page)
-        add(controls,text("Übungen für Training $plan",17f,true));gap(controls,6)
-        add(controls,text("Kategorie öffnen und Übungen mit Häkchen auswählen. Änderungen gelten für den aktuellen A/B-Plan.",12f,false,muted))
-        gap(controls,11)
-        add(controls,button("+ Eigene Übung hinzufügen"){exerciseDialog(null)})
-        gap(controls,8)
-        add(controls,button(if(showArchivedExercises)"Archivierte Übungen ausblenden" else "Archivierte Übungen anzeigen",false) {
-            showArchivedExercises=!showArchivedExercises
-            render()
-        })
+    }
 
-        val categories=(Store.CATEGORIES+all.map {it.category}).distinct()
-        for(category in categories) {
-            val options=all.filter {it.category==category}
-            if(options.isEmpty())continue
-            val chosen=options.count {it.id in selected}
-            val open=expandedCategory==category
-            val box=card(page)
-            add(box,button(category+(if(chosen>0)" ($chosen)" else "")+
-                (if(open)"  ▴" else "  ▾"),false) {
-                expandedCategory=if(open)null else category
-                render()
-            })
-            if(open) {
-                gap(box,7)
-                for(exercise in options) {
-                    val entry=column()
-                    if(phase!=null && !exercise.archived) {
-                        val checkbox=CheckBox(this).apply {
-                            text=exercise.name
-                            textSize=14f
-                            isChecked=exercise.id in selected
-                            setOnCheckedChangeListener {_,checked->
-                                try {
-                                    if(checked)store.addToPlan(plan,exercise.id,phase.id)
-                                    else store.removeFromPlan(plan,exercise.id,phase.id)
-                                    render()
-                                } catch(e:Exception){info(e.message ?: "Auswahl fehlgeschlagen.")}
+    private fun planEditor(phaseId:Long,identity:Store.PlanIdentity) {
+        val initial=store.planEntries(identity.key,phaseId).map {it.first.id to it.second}
+        val pending=initial.toMutableList()
+        val layout=column().apply {setPadding(dp(12),dp(8),dp(12),dp(4))}
+        val search=edit("","Übung, Kategorie oder Gerät suchen")
+        add(layout,search)
+        val scroll=ScrollView(this)
+        val content=column()
+        scroll.addView(content)
+        layout.addView(scroll,LinearLayout.LayoutParams(-1,dp(390)))
+        val dialog=AlertDialog.Builder(this).setTitle(identity.name)
+            .setView(layout).setCancelable(false)
+            .setNegativeButton("Abbrechen",null).setPositiveButton("Speichern",null).create()
+        fun populate() {
+            content.removeAllViews()
+            gap(content,8);add(content,text("Ausgewählt: "+pending.size+" Übungen",14f,true))
+            val query=search.text.toString().trim()
+            for((index,pair) in pending.withIndex()) {
+                val ex=store.exercise(pair.first) ?: continue
+                val c=card(content)
+                val item=row()
+                val details=column()
+                add(details,text(ex.name,14f,true))
+                add(details,text(ex.category+" · "+pair.second+" Sätze",11f,false,muted))
+                item.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+                add(item,button("⋯",false) {
+                    val actions=arrayOf("Satzanzahl ändern","Nach oben","Nach unten","Übung ersetzen","Entfernen")
+                    AlertDialog.Builder(this).setTitle(ex.name).setItems(actions){_,i->
+                        when(i) {
+                            0 -> {
+                                val field=edit(pair.second.toString(),"Sätze",true)
+                                val countDialog=AlertDialog.Builder(this).setTitle("Satzanzahl").setView(field)
+                                    .setNegativeButton("Abbrechen",null).setPositiveButton("Übernehmen",null).create()
+                                countDialog.show()
+                                countDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                                    val count=field.text.toString().toIntOrNull()
+                                    if(count==null || count !in 1..BackupValidation.MAX_TARGET_SETS)field.error="Ungültige Satzanzahl"
+                                    else {pending[index]=pair.first to count;countDialog.dismiss();populate()}
+                                }
                             }
+                            1 -> if(index>0){java.util.Collections.swap(pending,index,index-1);populate()}
+                            2 -> if(index<pending.lastIndex){java.util.Collections.swap(pending,index,index+1);populate()}
+                            3 -> {
+                                val options=store.exercises().filter {candidate->pending.none {it.first==candidate.id}}
+                                val labels=options.map {it.name+" · "+it.category}
+                                if(options.isEmpty())info("Keine weitere Übung verfügbar.")
+                                else AlertDialog.Builder(this).setTitle("Ersatzübung auswählen")
+                                    .setItems(labels.toTypedArray()){_,j->pending[index]=options[j].id to pair.second;populate()}.show()
+                            }
+                            4 -> {pending.removeAt(index);populate()}
                         }
-                        add(entry,checkbox)
-                    } else {
-                        add(entry,text(exercise.name+(if(exercise.archived)" (archiviert)" else ""),14f,true))
-                        if(exercise.id in selected) {
-                            add(entry,text("Im bisherigen Plan enthalten. Zum Entfernen Übung reaktivieren.",11f,false,muted))
+                    }.show()
+                },44)
+                add(c,item)
+                c.setOnLongClickListener {
+                    c.startDragAndDrop(android.content.ClipData.newPlainText("plan-order",index.toString()),
+                        View.DragShadowBuilder(c),index,0)
+                    true
+                }
+                c.setOnDragListener {_,event->
+                    when(event.action) {
+                        android.view.DragEvent.ACTION_DRAG_STARTED -> event.localState is Int
+                        android.view.DragEvent.ACTION_DROP -> {
+                            val from=event.localState as? Int
+                            if(from!=null && from in pending.indices && index in pending.indices && from!=index) {
+                                val entry=pending.removeAt(from);pending.add(index,entry);populate()
+                            }
+                            true
                         }
+                        else -> true
                     }
-                    add(entry,text((if(exercise.kind=="time")"Haltedauer in Sekunden" else "Wiederholungen")+
-                        (if(exercise.equipment.isBlank())"" else " · "+exercise.equipment),11f,false,muted))
-                    gap(entry,5)
-                    add(entry,button("Übung bearbeiten",false){exerciseDialog(exercise)})
-                    add(box,entry)
-                    gap(box,10)
+                }
+            }
+            add(content,text(if(query.isBlank())"Übungen hinzufügen – Suche nutzen" else "Suchergebnisse",14f,true))
+            if(query.isNotBlank()) {
+                val options=store.exercises().filter { ex ->
+                    pending.none {it.first==ex.id} &&
+                        listOf(ex.name,ex.category,ex.equipment).any {it.contains(query,true)}
+                }
+                if(options.isEmpty())add(content,text("Keine passenden Übungen.",13f,false,muted))
+                for(ex in options) {
+                    val line=row()
+                    val details=column()
+                    add(details,text(ex.name,14f,true));add(details,text(ex.category,11f,false,muted))
+                    line.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+                    add(line,button("+",false){pending.add(ex.id to 2);populate()},44)
+                    add(content,line);gap(content,4)
                 }
             }
         }
-        if(phase!=null) {
-            val stats=card(page)
-            add(stats,text("Training "+plan+": "+selected.size+" Übungen gewählt",15f,true))
-            gap(stats,7)
-            add(stats,text("Übungen und Kategorien lassen sich oben hinzufügen oder bearbeiten.",12f,false,muted))
-            gap(stats,10)
-            add(stats,button("Training $plan beginnen"){askCardio()})
-            gap(page,8)
-            add(page,button("Neue Trainingsphase",false){createPhaseDialog()})
-            gap(page,8)
-            add(page,button("Trainingsphase abschließen",false){finishPhaseDialog(phase)})
-            if(store.planEntries("A",phase.id).isNotEmpty() ||
-                store.planEntries("B",phase.id).isNotEmpty()) {
-                gap(page,8)
-                add(page,button("A/B-Pläne vollständig leeren",false) {
-                    if(draft!=null) {info("Bitte laufendes Training zuerst abschließen.");return@button}
-                    AlertDialog.Builder(this).setTitle("Trainingspläne wirklich leeren?")
-                        .setMessage("Alle ausgewählten Übungen dieser Trainingsphase aus A und B entfernen? Bereits absolvierte Einheiten und frühere Phasen bleiben erhalten.")
-                        .setNegativeButton("Abbrechen",null)
-                        .setPositiveButton("Pläne leeren"){_,_->
-                            try{
-                                store.clearCurrentPlans(phase.id)
-                                expandedCategory=null
-                                render()
-                                info("A und B sind jetzt leer.")
-                            }catch(e:Exception){info(e.message ?: "Leeren fehlgeschlagen.")}
-                        }.show()
+        watch(search){populate()}
+        populate()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            try {store.savePlanEntries(identity.key,phaseId,pending);dialog.dismiss();render()}
+            catch(e:Exception){info(e.message ?: "Speichern fehlgeschlagen.")}
+        }
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+            if(pending==initial)dialog.dismiss()
+            else AlertDialog.Builder(this).setTitle("Änderungen verwerfen?")
+                .setMessage("Der bisher gespeicherte Plan bleibt unverändert.")
+                .setNegativeButton("Weiter bearbeiten",null)
+                .setPositiveButton("Verwerfen"){_,_->dialog.dismiss()}.show()
+        }
+    }
+
+    private fun catalog() {
+        if(draft!=null){add(page,text("Übungskatalog nach Abschluss des Trainings bearbeiten."));return}
+        add(page,button("+ Eigene Übung"){exerciseDialog(null)})
+        gap(page,8)
+        val search=edit(catalogQuery,"Übung, Kategorie oder Gerät suchen")
+        add(page,search);gap(page,8)
+        add(page,button(if(showArchivedExercises)"Archivierte ausblenden" else "Archivierte anzeigen",false){
+            showArchivedExercises=!showArchivedExercises;render()
+        })
+        gap(page,8)
+        val content=column();add(page,content)
+        fun populate() {
+            content.removeAllViews()
+            val q=search.text.toString().trim()
+            val all=store.exercises(showArchivedExercises).filter {ex->
+                q.isBlank() || listOf(ex.name,ex.category,ex.equipment).any {it.contains(q,true)}
+            }
+            for(category in (Store.CATEGORIES+all.map {it.category}).distinct()) {
+                val options=all.filter {it.category==category}
+                if(options.isEmpty())continue
+                val c=card(content)
+                val open=category in expandedCategories || q.isNotBlank()
+                add(c,button(category+" ("+options.size+") "+if(open)"▴" else "▾",false){
+                    if(!expandedCategories.add(category))expandedCategories.remove(category)
+                    populate()
                 })
+                if(open)for(ex in options) {
+                    val line=row()
+                    val details=column()
+                    add(details,text(ex.name+(if(ex.archived)" · archiviert" else ""),14f,true))
+                    add(details,text(ex.equipment.ifBlank {"Ohne Geräte"},11f,false,muted))
+                    line.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+                    add(line,button("Bearbeiten",false){exerciseDialog(ex)},96)
+                    add(c,line);gap(c,4)
+                }
             }
         }
+        watch(search){catalogQuery=it;populate()}
+        populate()
     }
 
     private fun exerciseDialog(old:Exercise?) {
@@ -976,31 +1184,58 @@ class MainActivity : Activity() {
     }
 
     private fun results() {
-        title("Fortschritt","Tabellen, Trainingskurven und Körpergewicht.")
-        val filter=store.phase(viewingPhaseId ?: -1L)
-        add(page,button("Trainingsphase: "+(filter?.name ?: "Alle Phasen")+"  ▾",false) {
-            val options=listOf("Alle Phasen – gesamte Entwicklung")+
-                store.phases().map {it.name+(if(it.active)" · aktiv" else " · abgeschlossen")}
+        val section=row()
+        val groups=listOf("Fortschritt","Historie","Gewicht")
+        val selected=when(analysis){"Historie"->"Historie";"Gewicht"->"Gewicht";else->"Fortschritt"}
+        for(name in groups) {
+            section.addView(button(name,name==selected){analysis=if(name=="Fortschritt")"Tabelle" else name;render()},
+                LinearLayout.LayoutParams(0,dp(43),1f))
+        }
+        add(page,section);gap(page,10)
+        if(analysis=="Gewicht"){weightPage();return}
+        val phases=store.phases()
+        val filter=store.phase(viewingPhaseId ?: -1L) ?: store.activePhase() ?: phases.firstOrNull()
+        if(filter==null){add(page,text("Noch keine Trainingsphase."));return}
+        viewingPhaseId=filter.id
+        add(page,button("Trainingsphase: "+filter.name+"  ▾",false) {
             AlertDialog.Builder(this).setTitle("Trainingsphase auswählen")
-                .setItems(options.toTypedArray()) {_,index->
-                    viewingPhaseId=if(index==0)null else store.phases()[index-1].id
-                    render()
+                .setItems(phases.map {it.name}.toTypedArray()){_,index->
+                    viewingPhaseId=phases[index].id;render()
                 }.show()
         })
-        gap(page,11)
+        gap(page,8)
+        planSelector(page)
+        if(analysis=="Historie"){history();return}
         val buttons=row()
         listOf("Tabelle","Kurven").forEach {name ->
             buttons.addView(button(name,analysis==name){analysis=name;render()},
                 LinearLayout.LayoutParams(0,dp(42),1f))
         }
-        add(page,buttons);gap(page,14)
-        when(analysis) {
-            "Tabelle"->progressTable()
-            else->exerciseChart()
+        add(page,buttons);gap(page,12)
+        if(analysis=="Kurven")exerciseChart() else progressTable()
+    }
+
+    private fun history() {
+        val phase=viewingPhaseId ?: return
+        val values=store.performanceHistory(plan,phase)
+        val sessions=store.sessions(plan,phase).asReversed()
+        if(sessions.isEmpty())add(page,text("Noch keine gespeicherten Trainingseinheiten."))
+        for(training in sessions) {
+            val box=card(page)
+            val line=row()
+            val details=column()
+            add(details,text(store.planName(training.plan,training.phaseId)+" · "+date(training.timestamp),15f,true))
+            val result=values[training.id]
+            add(details,text(if(result!=null)"Index "+indexLabel(result) else store.sets(training.id).size.toString()+" Sätze",12f,false,muted))
+            line.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+            add(line,button("Öffnen",false){showWorkoutPreview(training)},80)
+            add(box,line)
+            add(box,button("JSON exportieren",false){saveWorkoutJson(training.id)})
+            add(box,button("Text kopieren",false){copyWorkoutText(training.id)})
         }
     }
+
     private fun progressTable() {
-        planSelector(page)
         add(page,text("Älteste Einheiten links, neueste rechts.",12f,false,muted));gap(page,9)
         val sessions=store.sessions(plan,viewingPhaseId)
         val exercises=store.progressExercises(plan,viewingPhaseId)
@@ -1023,6 +1258,8 @@ class MainActivity : Activity() {
         for(ex in exercises) {
             fixed.addView(cell(ex.name,exerciseWidth,true,exerciseHeight,3))
         }
+        fixed.addView(cell("Leistungsindex",exerciseWidth,true,headerHeight,2))
+        fixed.addView(cell("Sätze gesamt",exerciseWidth,false,headerHeight,1))
         add(whole,fixed,exerciseWidth)
 
         val scroll=HorizontalScrollView(this).apply {
@@ -1055,6 +1292,28 @@ class MainActivity : Activity() {
             }
             right.addView(values)
         }
+        val phase=viewingPhaseId
+        val scores=if(phase!=null)store.performanceHistory(plan,phase) else emptyMap()
+        val scoreRow=row()
+        val countRow=row()
+        for(session in sessions) {
+            val perf=scores[session.id]
+            val value=perf?.result?.index
+            val label=(if(perf?.estimated==true && value!=null)"≈ " else "")+
+                (value?.let {String.format(Locale.GERMANY,"%.1f",it)} ?: "–")
+            val scoreCell=cell(label,resultWidth,true,headerHeight,1)
+            if(value!=null)scoreCell.setTextColor(accent)
+            scoreCell.setOnClickListener {
+                AlertDialog.Builder(this).setTitle("Leistungsindex")
+                    .setMessage(if(perf==null)"Kein Vergleich verfügbar." else
+                        label+" · "+perf.result.comparableExercises+"/"+perf.result.referenceExercises+
+                        " vergleichbare Übungen.\nReferenz: erste Einheit dieses Plans in der Phase.\n≈ = ältere Einheit, zwei reguläre Sätze angenommen.")
+                    .setPositiveButton("Schließen",null).show()
+            }
+            scoreRow.addView(scoreCell)
+            countRow.addView(cell(store.sets(session.id).size.toString(),resultWidth,false,headerHeight,1))
+        }
+        right.addView(scoreRow);right.addView(countRow)
         scroll.addView(right)
         whole.addView(scroll,LinearLayout.LayoutParams(0,-2,1f))
         add(page,whole)
@@ -1065,36 +1324,15 @@ class MainActivity : Activity() {
         add(page,text("Vergleich bei gleicher Satzanzahl anhand von kg, Wiederholungen bzw. Sekunden; RIR bleibt unberücksichtigt.",11f,false,muted))
         gap(page,6)
         add(page,text("Beispiel: 30 / 10-10 = 30 kg pro Seite, 10 und 10 Wdh. · 45s-40s = Haltedauer.",12f,false,muted))
-        gap(page,16)
-        add(page,text("Gespeicherte Trainingseinheiten",17f,true))
-        gap(page,8)
-        for(training in sessions.asReversed()) {
-            val box=card(page)
-            val r=row()
-            val left=column()
-            add(left,text("Training "+training.plan+" · "+date(training.timestamp),14f,true))
-            add(left,text(store.phase(training.phaseId)?.name ?: "Phase "+training.phaseId,12f,false,muted))
-            r.addView(left,LinearLayout.LayoutParams(0,-2,1f))
-            add(r,button("Bearbeiten",false){editSessionDialog(training)},105)
-            add(box,r)
-            for(swap in store.exerciseSwaps(training.id)) {
-                val original=store.exercise(swap.originalExerciseId)?.name ?: "Unbekannt"
-                val replacement=store.exercise(swap.replacementExerciseId)?.name ?: "Unbekannt"
-                add(box,text("Übungswechsel: "+original+" → "+replacement+
-                    (if(swap.reason.isBlank())"" else " · "+swap.reason),12f,false,muted))
-            }
-            gap(box,7)
-            add(box,button("Training als JSON herunterladen",false){saveWorkoutJson(training.id)})
-            gap(box,5)
-            add(box,button("Training als Text kopieren",false){copyWorkoutText(training.id)})
-        }
+        gap(page,6)
+        add(page,text("Index: erste Einheit = 100. Zusatzsätze zählen zu ⅓; ≈ = geschätzte historische Satzanzahl.",12f,false,muted))
     }
     private fun cell(value:String,width:Int,bold:Boolean,height:Int,lines:Int):TextView =
         text(value,if(bold)12f else 13f,bold).apply {
             gravity=Gravity.CENTER_VERTICAL or (if(lines==3 || value=="Übung")
                 Gravity.LEFT else Gravity.CENTER_HORIZONTAL)
             setPadding(dp(7),dp(4),dp(7),dp(4))
-            background=shape(Color.WHITE,0,Color.rgb(224,232,227))
+            background=shape(surface,0,border)
             layoutParams=LinearLayout.LayoutParams(dp(width),dp(height))
             maxLines=lines
             ellipsize=android.text.TextUtils.TruncateAt.END
@@ -1212,7 +1450,7 @@ class MainActivity : Activity() {
         }
         refreshRows()
         val dialog=AlertDialog.Builder(this)
-            .setTitle("Training "+session.plan+" bearbeiten")
+            .setTitle(store.planName(session.plan,session.phaseId)+" bearbeiten")
             .setView(scroll).setNegativeButton("Abbrechen",null)
             .setPositiveButton("Änderungen speichern",null).create()
         dialog.setOnShowListener {
@@ -1232,7 +1470,20 @@ class MainActivity : Activity() {
     }
 
     private fun exerciseChart() {
-        planSelector(page)
+        val phase=viewingPhaseId ?: return
+        val scores=store.performanceHistory(plan,phase)
+        val sessions=store.sessions(plan,phase)
+        val points=sessions.mapNotNull { session->scores[session.id]?.result?.index?.let {session.timestamp to it} }
+        val summary=card(page)
+        add(summary,text("Leistungsindex",17f,true))
+        val latest=sessions.lastOrNull()?.let {scores[it.id]}
+        if(latest!=null)add(summary,text(indexLabel(latest),23f,true,accent))
+        add(summary,text("Referenz = 100 · Klammern: Sätze · ≈ geschätzte Altwerte",12f,false,muted))
+        if(points.isNotEmpty())add(summary,TrendChartView(points,"Index"),-1,210)
+        for(session in sessions.takeLast(6).asReversed()) {
+            val p=scores[session.id] ?: continue
+            add(summary,text(date(session.timestamp,true)+"   "+indexLabel(p)+"   · "+p.result.comparableExercises+"/"+p.result.referenceExercises+" Übungen",12f,false,muted))
+        }
         val all=store.progressExercises(plan,viewingPhaseId)
         if(all.isEmpty()) {add(page,text("Noch keine Übungen im Plan.",14f));return}
         val picker=Spinner(this).apply {
@@ -1419,7 +1670,12 @@ class MainActivity : Activity() {
     }
 
     private fun dataPage() {
-        title("Daten & Sicherung","Alle Trainingsdaten bleiben lokal auf dem Gerät.")
+        title("Einstellungen","Alle Trainingsdaten bleiben lokal auf dem Gerät.")
+        val colors=card(page)
+        add(colors,text("Farbschema",17f,true));gap(colors,5)
+        for(option in TrainingPalette.entries) add(colors,button(option.displayName,option==palette){
+            if(option!=palette){settingsPrefs().edit().putString("theme",option.name).apply();recreate()}
+        })
         val updateCard=card(page)
         add(updateCard,text("Software-Updates",17f,true))
         gap(updateCard,7)
@@ -1586,12 +1842,12 @@ class MainActivity : Activity() {
     @Deprecated("Android back callback")
     override fun onBackPressed() {
         if(importTask!=null) {info("Die Wiederherstellung läuft. Mit „Abbrechen“ kannst du sie beenden.");return}
-        if(draft!=null && tab=="Training") {
+        if(draft!=null && tab=="Workout") {
             AlertDialog.Builder(this).setTitle("Training läuft")
                 .setMessage("Zur Startseite wechseln? Die aktuellen Eingaben bleiben erhalten.")
                 .setNegativeButton("Bleiben",null)
                 .setPositiveButton("Startseite"){_,_->tab="Start";render()}.show()
-        } else {tab="Start";render()}
+        } else {tab=if(tab=="Katalog")"Training" else "Start";render()}
     }
 
     inner class TrendChartView(private val points:List<Pair<Long,Double>>,private val unit:String):View(this) {
@@ -1610,7 +1866,7 @@ class MainActivity : Activity() {
             fun x(t:Long):Float=if(maxX==minX)(l+r)/2f else
                 l+(r-l)*(t-minX).toFloat()/(maxX-minX).toFloat()
             fun y(v:Double):Float=bottom-((v-minY)/(maxY-minY)).toFloat()*(bottom-top)
-            p.style=Paint.Style.STROKE;p.color=Color.rgb(208,224,215);p.strokeWidth=dp(1).toFloat()
+            p.style=Paint.Style.STROKE;p.color=border;p.strokeWidth=dp(1).toFloat()
             for(i in 0..4) {
                 val yy=top+(bottom-top)*i/4f
                 canvas.drawLine(l,yy,r,yy,p)
